@@ -150,11 +150,12 @@ export function barChart(o) {
   const w = o.w || widthFor(id) || 640;
   const h = o.h || 220;
   const pad = { l: 40, r: 10, t: 14, b: 28 };
-  const max = (o.yMax ?? Math.max(...o.bars.map((b) => b.value))) * 1.1;
+  // Guard against empty or all-zero data (would divide by zero and draw NaN paths).
+  const max = Math.max(1, (o.yMax ?? Math.max(0, ...o.bars.map((b) => b.value || 0))) * 1.1);
+  const bw = (w - pad.l - pad.r) / Math.max(1, o.bars.length);
   const ticks = niceTicks(0, max, 4);
   const top = Math.max(max, ticks[ticks.length - 1]);
   const y = (v) => pad.t + (1 - v / top) * (h - pad.t - pad.b);
-  const bw = (w - pad.l - pad.r) / o.bars.length;
   const yFmt = o.yFmt || ((v) => v);
   let svg = `<svg viewBox="0 0 ${w} ${h}" class="chart-svg" role="img" aria-label="${esc(o.label || 'Bar chart')}" data-chart="${id}">
   <defs><pattern id="hatch-${id}" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)"><rect width="6" height="6" fill="#DCE7F3"/><line x1="0" y1="0" x2="0" y2="6" stroke="#5B8DC4" stroke-width="2.2"/></pattern></defs>`;

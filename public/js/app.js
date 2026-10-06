@@ -41,7 +41,7 @@ const RES_NAV = [
   ] },
   { group: 'Resources', items: [
     { id: 'consumption', label: 'Consumption', icon: 'bars' },
-    { id: 'water-access', label: 'Alternative Water Access', icon: 'truck' },
+    { id: 'water-access', label: 'Where to Get Water', icon: 'truck' },
   ] },
 ];
 const PRO_NAV = [

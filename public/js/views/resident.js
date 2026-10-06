@@ -6,7 +6,7 @@ import { icon, status, src, card, kpi, tabs, alertBanner, timeline, empty, regis
 import { lineChart, barChart, gaugeBar } from '../charts.js';
 import { renderMap, svgPoint } from '../map.js';
 import { syncMaps } from '../livemap.js';
-import { esc, fmt, fmtTime, fmtDate, fmtDateShort, fmtDateTime, relTime, toLocalInput, fromLocalInput, readImage, pointInPolygon, parsePoly, hoursLabel } from '../util.js';
+import { esc, fmt, fmtTime, fmtDate, fmtDateShort, fmtDateTime, relTime, toLocalInput, fromLocalInput, readImage, pointInPolygon, parsePoly, hoursLabel, toLL } from '../util.js';
 import { notificationsView, go, canSwitchRole } from '../app.js';
 import { weatherState, dayImpacts, describe as describeWx, wIcon } from '../weather.js';
 
@@ -961,7 +961,7 @@ function outlookMain() {
 
   const store = fc.status === 'risk' || fc.status === 'critical';
   const tips = store
-    ? ['Store enough water for drinking and cooking for 1 day.', 'Avoid non-essential use, like washing vehicles or watering plants.', 'Find water stations in <a href="#/r/water-access">Alternative Water Access</a> if you run out.']
+    ? ['Store enough water for drinking and cooking for 1 day.', 'Avoid non-essential use, like washing vehicles or watering plants.', 'If you run out, see <a href="#/r/water-access">Where to Get Water</a>.']
     : ['No water shortages are expected from the city supply.', 'Local repairs can still affect your street. Check <a href="#/r/advisories">Advisories</a>.', 'Use water wisely during the busiest hours (6–8 AM and 6–8 PM).'];
 
   return `${hero}
@@ -983,22 +983,43 @@ const outlook = {
 
 // ---------------------------------------------------------------- ALTERNATIVE WATER ACCESS
 let altSel = null;
+const ALT_WORDS = { AVAILABLE: ['normal', 'Open now'], LIMITED: ['warning', 'Limited water'], SCHEDULED: ['info', 'Coming later'], CLOSED: ['offline', 'Closed'] };
+// Straight-line distance from the resident's home, in km (good enough to sort and show "1.2 km away").
+function kmFromHome(p) {
+  const [la1, lo1] = toLL(RESIDENT.x, RESIDENT.y);
+  const [la2, lo2] = toLL(p.x, p.y);
+  const r = Math.PI / 180;
+  const a = Math.sin(((la2 - la1) * r) / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(((lo2 - lo1) * r) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(a));
+}
+const kmLabel = (km) => (km < 1 ? `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m away` : `${fmt(km, 1)} km away`);
+
 const waterAccess = {
-  title: 'Alternative Water Access',
+  title: 'Where to Get Water',
   regions: {
     list() {
       const s = st();
-      const pts = s.altWater.filter((p) => p.active && p.confirmedAt).sort((a, b) => (b.zone === RESIDENT.zone) - (a.zone === RESIDENT.zone));
-      if (!pts.length) return empty('No distribution points right now', 'When your water provider sets up water distribution points, they will appear here.', 'droplets');
+      const all = s.altWater.filter((p) => p.active && p.confirmedAt).map((p) => ({ ...p, km: kmFromHome(p) }));
+      const pts = all.sort((a, b) => a.km - b.km); // closest to your home first
+      if (!pts.length) return card('', empty('No water points right now', 'When your water provider opens a water point, it will appear here.', 'truck'));
       return pts
         .map((p) => {
           const tank = p.tankId ? s.emergencyTanks.find((t) => t.id === p.tankId) : null;
-          return `<article class="aw ${altSel === p.id ? 'is-sel' : ''}" id="aw-${p.id}">
-          <div class="aw-h"><h3>${esc(p.name)}</h3>${altStatus(p.status)}</div>
-          <div class="aw-addr">${icon('pin', 14)} ${esc(p.address)} ${p.zone === RESIDENT.zone ? '<span class="pill pill--blue">Your area</span>' : ''}</div>
-          <dl class="kv kv--2"><div><dt>Hours</dt><dd>${esc(p.hours)}</dd></div><div><dt>Last confirmed</dt><dd>${fmtTime(p.confirmedAt)} <span class="muted">(${relTime(p.confirmedAt)})</span></dd></div>
-          ${tank ? `<div><dt>Water on site</dt><dd>${fmt(tank.volumeL)} L ${src(tank.mode === 'SIMULATED' ? 'SIMULATED' : 'MANUAL')}<br/><span class="muted sm">Updated ${relTime(tank.updatedAt)}</span></dd></div>` : ''}</dl>
-          <p class="aw-ins">${icon('info', 14)} ${esc(p.instructions)}</p></article>`;
+          const [sev, word] = ALT_WORDS[p.status] || ['info', titleCase(p.status)];
+          const left = tank ? Math.max(0, Math.min(100, (tank.volumeL / tank.capacityL) * 100)) : null;
+          const [lat, lng] = toLL(p.x, p.y);
+          return `<article class="aw raw ${altSel === p.id ? 'is-sel' : ''}" id="aw-${p.id}">
+            <div class="raw-h"><span class="raw-st raw-st--${SEV[sev].cls}"><span class="sys-dot sys-dot--${SEV[sev].cls}" aria-hidden="true"></span>${word}</span>${p.zone === RESIDENT.zone ? '<span class="pill pill--blue">Your area</span>' : ''}<span class="raw-km">${icon('pin', 13)} ${kmLabel(p.km)}</span></div>
+            <h3 class="raw-t">${esc(p.name)}</h3>
+            <p class="raw-addr">${esc(p.address)}</p>
+            <dl class="raw-meta">
+              <div><dt>Open</dt><dd>${esc(p.hours)}</dd></div>
+              <div><dt>Checked</dt><dd>${relTime(p.confirmedAt)}</dd></div>
+            </dl>
+            ${tank ? `<div class="raw-tank"><div class="raw-tank-h"><span>Water left</span><strong>${fmt(tank.volumeL)} litres</strong></div><div class="raw-bar"><span style="width:${left}%" class="${left < 25 ? 'is-low' : ''}"></span></div><small>Updated ${relTime(tank.updatedAt)}</small></div>` : ''}
+            ${p.instructions ? `<p class="raw-ins"><strong>Good to know:</strong> ${esc(p.instructions)}</p>` : ''}
+            <div class="raw-a"><button type="button" class="btn btn--outline btn--sm" data-action="alt-select" data-id="${p.id}">${icon('pin', 14)} Show on map</button><a class="btn btn--ghost btn--sm" href="https://www.google.com/maps/dir/?api=1&destination=${lat.toFixed(5)},${lng.toFixed(5)}" target="_blank" rel="noopener">Directions ${icon('arrow', 14)}</a></div>
+          </article>`;
         })
         .join('');
     },
@@ -1006,50 +1027,135 @@ const waterAccess = {
   render() {
     const s = st();
     const svc = S.residentService(s);
-    const disrupted = svc.sev !== 'normal';
+    const disrupted = svc.sev !== 'normal' && !svc.restored;
+    const pts = s.altWater.filter((p) => p.active && p.confirmedAt);
+    const count = (st8) => pts.filter((p) => p.status === st8).length;
+    // Summary strip: your area's situation + how many points are open, limited or coming later.
+    const summary = `<section class="card raw-sum">
+      <div class="raw-sum-t"><span class="sys-dot sys-dot--${disrupted ? SEV[svc.sev].cls : 'ok'}" aria-hidden="true"></span><div><strong>${disrupted ? 'Water is affected in your area' : 'No water problems in your area'}</strong><span>${!pts.length ? 'Your water provider will list places to collect water here if your water is cut off.' : disrupted ? 'You can collect clean water at the points below.' : 'These water points are on standby in case water is cut off.'}</span></div></div>
+      <div class="raw-sum-n">
+        <div><strong>${count('AVAILABLE')}</strong><span><span class="sys-dot sys-dot--ok" aria-hidden="true"></span> Open now</span></div>
+        <div><strong>${count('LIMITED')}</strong><span><span class="sys-dot sys-dot--warn" aria-hidden="true"></span> Limited</span></div>
+        <div><strong>${count('SCHEDULED')}</strong><span><span class="sys-dot sys-dot--info" aria-hidden="true"></span> Coming later</span></div>
+      </div>
+    </section>`;
     return `<div class="r-page">
-      <div class="page-h"><div><h1>Alternative Water Access</h1><p class="page-sub">Provider-confirmed water distribution points during service disruptions.</p></div></div>
-      ${disrupted ? alertBanner('warning', `Service in your area: ${svc.label}`, 'The following distribution points have been confirmed by your water provider.') : alertBanner('info', 'No disruption in your area right now', 'Points below are on standby. Only provider-confirmed information is shown.')}
-      <div class="aw-layout"><div class="aw-map">${renderMap({ mode: 'resident', alt: true, selected: altSel, focusZone: RESIDENT.zone })}<div class="map-legend"><span><i class="lg-dot" style="background:#1F8A4C"></i>Available</span><span><i class="lg-dot" style="background:#D97706"></i>Limited / scheduled</span><span><i class="lg-dot" style="background:#1D6FB8"></i>Your address</span></div></div>
+      <div class="page-h"><div><h1>Where to Get Water</h1><p class="page-sub">Places to collect clean water when your tap water is off. Only places checked by your water provider are shown.</p></div></div>
+      ${summary}
+      <h2 class="sec-t">Closest to your home first</h2>
+      <div class="aw-layout"><div class="aw-map">${renderMap({ mode: 'resident', alt: true, selected: altSel, focusZone: RESIDENT.zone })}<div class="map-legend"><span><i class="lg-dot" style="background:#1F8A4C"></i>Open now</span><span><i class="lg-dot" style="background:#D97706"></i>Limited or coming later</span><span><i class="lg-dot" style="background:#1D6FB8"></i>Your home</span><span><i class="lg-area" style="background:rgba(29,111,184,.3);border:2px solid #0B2545"></i>Your area</span><span><i class="lg-area" style="background:rgba(100,116,139,.18);border:2px solid #64748B"></i>Other areas</span></div></div>
       <div class="aw-list" data-region="list">${this.regions.list()}</div></div>
-      <p class="fine">Bring clean, covered containers. Information is only displayed after confirmation by the provider; times show when each point was last confirmed.</p>
+      ${card(
+        'What to bring',
+        `<ul class="tips raw-tips">
+          <li>Clean containers with covers, like jugs or pails. Wash them first.</li>
+          <li>Only take what your household needs, so there is enough for everyone.</li>
+          <li>Seniors, persons with disability and families with babies may be served first.</li>
+          <li>Boil collected water for 1 minute before drinking if you are not sure it is clean.</li>
+        </ul>`,
+        { sub: 'Times show when your water provider last checked each place' }
+      )}
     </div>`;
   },
 };
 
 // ---------------------------------------------------------------- PROFILE
+// Profile: a settings layout — who you are on the left, your account and preferences on the right.
+// Notification and language choices are remembered on this device only (they do not filter or translate yet).
+const PREF_KEY = 'samaragos.residentPrefs';
+const NOTIF_PREFS = [
+  ['advisories', 'Notices for my area', 'When your water provider posts or updates a notice for your barangay.', true],
+  ['reports', 'Updates on my reports', 'When your report is seen, checked, repaired or fixed.', true],
+  ['water', 'Places to get water', 'When a water point opens near you during an outage.', true],
+  ['outlook', 'Low water warnings', 'When water may run low in the next 24 hours.', true],
+  ['bill', 'Meter readings and bills', 'When a new meter reading or bill is ready (once your account is linked).', false],
+];
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {};
+  } catch (e) {
+    return {};
+  }
+}
+function savePref(k, v) {
+  const p = loadPrefs();
+  p[k] = v;
+  try {
+    localStorage.setItem(PREF_KEY, JSON.stringify(p));
+  } catch (e) {
+    /* storage blocked — the switch still works for this visit */
+  }
+}
+
 const profile = {
   title: 'Profile',
   render() {
-    return `<div class="r-page r-page--narrow">
-      <div class="page-h"><div><h1>Profile</h1></div></div>
-      <section class="card"><div class="card-b prof">
-        <span class="avatar avatar--lg">${RESIDENT.initials}</span>
-        <div><h2>${esc(RESIDENT.name)}</h2><p class="muted">${esc(RESIDENT.email || RESIDENT.address)}</p></div>
-        ${RESIDENT.email ? `<button class="btn btn--outline btn--sm prof-edit" data-action="profile-edit">${icon('user', 15)} Edit profile</button>` : ''}
-      </div></section>
-      ${card(
-        'Water service account',
-        `<dl class="kv"><div><dt>Account number</dt><dd>Not linked yet</dd></div><div><dt>Service address</dt><dd>${esc(RESIDENT.address)}</dd></div><div><dt>Barangay</dt><dd>${esc(myZone().short)}</dd></div><div><dt>Mobile number</dt><dd>${esc(RESIDENT.phone || '—')}</dd></div><div><dt>Water provider</dt><dd>${esc(UTILITY.name)}</dd></div></dl>
-        <p class="fine">Linking your water district account number will be available once the billing system is connected.</p>`
-      )}
-      ${card(
-        'Notification preferences',
-        `<div class="stack-sm">${[
-          ['New and updated advisories for my area', true],
-          ['Updates on my reports', true],
-          ['Emergency water availability', true],
-          ['Water outlook warnings', true],
-          ['Billing reading posted', false],
-        ]
-          .map(([l, on]) => `<label class="switch"><input type="checkbox" ${on ? 'checked' : ''}/><span class="switch-t" aria-hidden="true"></span>${l}</label>`)
-          .join('')}</div>
-        ${field('Preferred language', '<select id="pf-lang"><option>English</option><option>Waray-Waray</option><option>Filipino</option></select>', { id: 'pf-lang' })}`
-      )}
-      <div class="form-a">${canSwitchRole() ? `<button class="btn btn--outline" data-action="switch-role">${icon('activity', 16)} Switch to provider view</button>` : ''}<button class="btn btn--ghost" data-action="logout">${icon('logout', 16)} Sign out</button></div>
+    const prefs = loadPrefs();
+    const on = (k, def) => (prefs[k] === undefined ? def : !!prefs[k]);
+    const lang = prefs.lang || 'English';
+    return `<div class="r-page">
+      <div class="page-h"><div><h1>Profile</h1><p class="page-sub">Your details, your water account and how we keep you updated.</p></div></div>
+      <div class="rprof">
+        <aside class="rprof-side">
+          <section class="card rprof-me">
+            <span class="avatar rprof-av">${RESIDENT.initials}</span>
+            <h2>${esc(RESIDENT.name)}</h2>
+            ${RESIDENT.email ? `<p class="muted">${esc(RESIDENT.email)}</p>` : ''}
+            <div class="rprof-chips"><span class="pill pill--blue">${icon('pin', 12)} ${esc(myZone().short)}</span><span class="pill">Resident</span></div>
+            <div class="rprof-a">
+              ${RESIDENT.email ? `<button class="btn btn--primary btn--sm" data-action="profile-edit">${icon('user', 15)} Edit profile</button>` : ''}
+              ${canSwitchRole() ? `<button class="btn btn--outline btn--sm" data-action="switch-role">${icon('activity', 15)} Switch to provider view</button>` : ''}
+              <button class="btn btn--ghost btn--sm" data-action="logout">${icon('logout', 15)} Sign out</button>
+            </div>
+          </section>
+          ${card(
+            'Contact your water provider',
+            `<p class="rprof-org">${esc(UTILITY.name)}</p>
+            <ul class="rprof-contact">
+              <li>${icon('phone', 16)}<a href="tel:${esc(UTILITY.phone.replace(/[^\d+]/g, ''))}">${esc(UTILITY.phone)}</a></li>
+              <li>${icon('pin', 16)}<span>${esc(UTILITY.address)}</span></li>
+              <li>${icon('link', 16)}<a href="${esc(UTILITY.website)}" target="_blank" rel="noopener">${esc(UTILITY.website.replace(/^https?:\/\//, ''))}</a></li>
+            </ul>
+            <p class="fine">For problems with your water, the fastest way is to <a href="#/r/reports">send a report</a>.</p>`
+          )}
+        </aside>
+        <div class="rprof-main">
+          ${card(
+            'Home & water account',
+            `<dl class="rprof-kv">
+              <div><dt>Name</dt><dd>${esc(RESIDENT.name)}</dd></div>
+              <div><dt>Home address</dt><dd>${esc(RESIDENT.address)}</dd></div>
+              <div><dt>Barangay</dt><dd>${esc(myZone().short)}</dd></div>
+              <div><dt>Mobile number</dt><dd>${esc(RESIDENT.phone && RESIDENT.phone !== 'Not provided' ? RESIDENT.phone : 'Not added')}</dd></div>
+              <div><dt>Water provider</dt><dd>${esc(UTILITY.name)}</dd></div>
+              <div><dt>Water account number</dt><dd><span class="muted">Not linked yet</span></dd></div>
+            </dl>
+            <p class="fine">Linking your water district account will be possible once the billing system is connected.</p>`,
+            { sub: 'Your barangay decides which notices and water updates you get', actions: RESIDENT.email ? `<button class="btn btn--ghost btn--sm" data-action="profile-edit">Edit</button>` : '' }
+          )}
+          ${card(
+            'Notifications',
+            `<ul class="rprof-notif">${NOTIF_PREFS.map(
+              ([k, label, desc, def]) => `<li><label class="switch"><input type="checkbox" ${on(k, def) ? 'checked' : ''} data-change="pf-notif" data-k="${k}"/><span class="switch-t" aria-hidden="true"></span><span class="rprof-n-t"><strong>${label}</strong><small>${desc}</small></span></label></li>`
+            ).join('')}</ul>
+            <p class="fine">Your choices are saved on this device. Notifications are not filtered by these choices yet.</p>`,
+            { sub: 'Choose what you want to hear about' }
+          )}
+          ${card(
+            'Language',
+            `${field('Preferred language', `<select id="pf-lang" data-change="pf-lang">${['English', 'Waray-Waray', 'Filipino'].map((l) => `<option ${l === lang ? 'selected' : ''}>${l}</option>`).join('')}</select>`, { id: 'pf-lang' })}
+            <p class="fine">The app is in English for now. Waray-Waray and Filipino are planned.</p>`
+          )}
+        </div>
+      </div>
     </div>`;
   },
 };
+
+registerInputs({
+  'pf-notif': (el) => savePref(el.dataset.k, el.checked),
+  'pf-lang': (el) => savePref('lang', el.value),
+});
 
 const notifications = { title: 'Notifications', render: () => `<div class="r-page">${notificationsView('resident')}</div>` };
 
