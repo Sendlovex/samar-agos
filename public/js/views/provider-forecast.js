@@ -1,6 +1,6 @@
 // Provider: Shortage early warning (forecast) and Response Simulator.
 import * as S from '../store.js';
-import { icon, status, src, card, empty, register, registerInputs, alertBanner, openModal, closeOverlay, field, SEV } from '../ui.js';
+import { icon, status, src, card, kpi, empty, register, registerInputs, alertBanner, openModal, closeOverlay, field, SEV } from '../ui.js';
 import { lineChart, barChart } from '../charts.js';
 import { esc, fmt, fmtL, fmtTime, hoursLabel, relTime } from '../util.js';
 import { weatherState, dayImpacts, describe as wxDescribe, wIcon, WEATHER_BASE } from '../weather.js';
@@ -44,7 +44,7 @@ function historyAndForecast(fc, id, { h = 260, forecastSeries } = {}) {
     ],
     nowIndex: nowI,
     bands: [{ from: nowI, to: n - 1, color: '#F5F7FA', label: 'FORECAST' }],
-    thresholds: [{ y: 30, label: 'Minimum reserve 30%', color: '#C0262D' }],
+    thresholds: [{ y: S.MIN_RESERVE * 100, label: `Minimum reserve ${Math.round(S.MIN_RESERVE * 100)}%`, color: '#C0262D' }],
     yMin: 0,
     yMax: 100,
     yFmt: (v) => `${Math.round(v)}%`,
@@ -54,7 +54,6 @@ function historyAndForecast(fc, id, { h = 260, forecastSeries } = {}) {
 
 // ---------------------------------------------------------------- FORECAST
 const sentence = (t) => t.charAt(0) + t.slice(1).toLowerCase();
-const dot = (cls) => `<span class="sys-dot sys-dot--${cls}" aria-hidden="true"></span>`;
 const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v), 0)}%`;
 const signedC = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v), 1)} °C`;
 const dayName = (date, i) => (i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long' }));
@@ -104,17 +103,17 @@ function weatherCard() {
     'Weather & climate outlook',
     `<div class="wx">
       <div class="wx-now">
-        <div class="wx-now-h">${wIcon(now.icon, 34)}<div><div class="wx-temp">${fmt(c.temperature_2m, 0)}°<small>C</small></div><div class="wx-cond">${now.text}</div></div></div>
+        <div class="wx-now-h">${wIcon(now.icon, 34)}<div><div class="wx-temp">${fmt(c.temperature_2m, 0)}<small>°C</small></div><div class="wx-cond">${now.text}</div></div></div>
         <dl class="wx-meta"><div><dt>Feels like</dt><dd>${fmt(c.apparent_temperature, 0)} °C</dd></div><div><dt>Humidity</dt><dd>${fmt(c.relative_humidity_2m, 0)}%</dd></div><div><dt>Wind</dt><dd>${fmt(c.wind_speed_10m, 0)} km/h</dd></div><div><dt>Rain now</dt><dd>${fmt(c.precipitation || 0, 1)} mm</dd></div></dl>
       </div>
       <div class="wx-days">${d.time
         .map((date, i) => {
           const w = wxDescribe(d.weather_code[i]);
-          return `<div class="wx-day"><div class="wx-day-n">${dayName(date, i)}</div>${wIcon(w.icon, 26)}<div class="wx-day-c">${w.text}</div><div class="wx-day-t"><strong>${fmt(d.temperature_2m_max[i], 0)}°</strong> / ${fmt(d.temperature_2m_min[i], 0)}°</div><div class="wx-day-r">${fmt(d.precipitation_sum[i] || 0, 0)} mm · ${fmt(d.precipitation_probability_max[i] || 0, 0)}%</div></div>`;
+          return `<div class="wx-day"><div class="wx-day-n">${dayName(date, i)}</div>${wIcon(w.icon, 26)}<div class="wx-day-c">${w.text}</div><div class="wx-day-t"><strong>${fmt(d.temperature_2m_max[i], 0)}°</strong> / ${fmt(d.temperature_2m_min[i], 0)}°</div><div class="wx-day-r">${fmt(d.precipitation_sum[i] || 0, 0)} mm rain, ${fmt(d.precipitation_probability_max[i] || 0, 0)}% chance</div></div>`;
         })
         .join('')}</div>
       <div class="wx-fx"><div class="wx-fx-h"><span>Effect on water supply</span>${src('ESTIMATED')}</div>
-        <ul>${fx.map((x) => `<li>${dot(x.sev)}<div><div class="wx-fx-l">${x.label}<strong>${x.value}</strong></div><div class="wx-fx-t">${esc(x.text)}</div></div></li>`).join('')}</ul>
+        <ul>${fx.map((x) => `<li class="wx-fx--${x.sev}"><div><div class="wx-fx-l">${x.label}<strong>${x.value}</strong></div><div class="wx-fx-t">${esc(x.text)}</div></div></li>`).join('')}</ul>
       </div>
     </div>
     ${climate ? `<div class="wx-clim"><div class="wx-fx-h"><span>Climate for ${climate.monthName}</span>${src('CLIMATE RECORD')}</div>
@@ -122,9 +121,9 @@ function weatherCard() {
       <div><dt>Today's forecast high</dt><dd>${fmt(d.temperature_2m_max[0], 0)} °C</dd><span>${signedC(d.temperature_2m_max[0] - climate.normalTmax)} vs normal</span></div>
       <div><dt>Rain, last 30 days</dt><dd>${fmt(climate.rain30, 0)} mm</dd><span>Normal ${fmt(climate.normalRain30, 0)} mm</span></div>
       <div><dt>Versus normal</dt><dd>${fmt(climate.pctOfNormal, 0)}%</dd><span>${climate.pctOfNormal < 50 ? 'Dry' : climate.pctOfNormal > 150 ? 'Wetter than usual' : 'Near normal'}</span></div></dl></div>` : ''}
-    <div class="wx-rain">${barChart({ id: 'wx-rain', label: 'Rainfall, next 48 hours, millimetres per hour', bars: rain.map((v, i) => ({ label: i % 12 === 0 ? new Date(rainTimes[i]).toLocaleTimeString('en-US', { weekday: 'short', hour: 'numeric' }) : '', value: v || 0, color: '#8A9BB0', tip: `${new Date(rainTimes[i]).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })} · ${fmt(v || 0, 1)} mm` })), yFmt: (v) => `${fmt(v, 1)}`, h: 110, yMax: Math.max(2, ...rain.map((v) => v || 0)) })}
+    <div class="wx-rain">${barChart({ id: 'wx-rain', label: 'Rainfall, next 48 hours, millimetres per hour', bars: rain.map((v, i) => ({ label: i % 12 === 0 ? new Date(rainTimes[i]).toLocaleTimeString('en-US', { weekday: 'short', hour: 'numeric' }) : '', value: v || 0, color: '#8A9BB0', tip: `${new Date(rainTimes[i]).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })}: ${fmt(v || 0, 1)} mm` })), yFmt: (v) => `${fmt(v, 1)}`, h: 110, yMax: Math.max(2, ...rain.map((v) => v || 0)) })}
       <div class="chart-cap">Rainfall, next 48 hours (mm per hour) ${src('FORECAST')}</div></div>`,
-    { sub: `Catbalogan City · Open-Meteo forecast${climate ? ' and ERA5 climate record' : ''} · updated ${fmtTime(data.fetchedAt)}`, actions: src('FORECAST') }
+    { sub: `Catbalogan City. Open-Meteo forecast${climate ? ' and ERA5 climate record' : ''}, updated ${fmtTime(data.fetchedAt)}`, actions: src('FORECAST') }
   );
 }
 
@@ -144,46 +143,53 @@ function forecastMain() {
     ['In 24 hours', fc.at24, 'FORECAST'],
     ['In 48 hours', fc.at48, 'FORECAST'],
   ];
+  const minPct = Math.round(S.MIN_RESERVE * 100);
   const below = fc.now <= S.MIN_RESERVE;
   const msg = below
-    ? 'Storage is already below the 30% minimum reserve.'
+    ? `Storage is already below the ${minPct}% firefighting reserve.`
     : fc.crossH != null
       ? `Based on current conditions, storage may reach the minimum reserve in approximately <strong>${hoursLabel(fc.crossH)}</strong>.`
       : 'Based on current conditions, storage stays above the minimum reserve for the next 72 hours.';
   const imp = dayImpacts()[0];
-  return `<div class="ops-grid ops-grid--eq">
-    ${card(
-      'Supply outlook',
-      `<div class="fc-status">${dot(SEV[fs.sev].cls)}<div><span>Status</span><strong>${sentence(fs.label)}</strong></div></div>
+  const sevCls = SEV[fs.sev].cls;
+  const lowAt = (v) => (v <= S.MIN_RESERVE ? 'is-low' : '');
+  const delta24 = (fc.at24 - fc.now) * 100;
+  return `<div class="kgrid">
+    <section class="kp-primary fc-primary fc-primary--${sevCls}">
+      <div class="kpi-top"><span class="kpi-label">Supply outlook, next 72 hours</span>${src('FORECAST')}</div>
+      <div class="fc-head">${sentence(fs.label)}</div>
       <p class="fc-msg">${msg}</p>
-      <table class="fc-tbl"><tbody>${rows
-        .map(([l, v, sr]) => `<tr><th>${l}</th><td><div class="meter"><span style="width:${Math.max(0, Math.min(100, v * 100))}%"></span><i style="left:30%"></i></div></td><td class="num"><strong>${pct(v)}</strong></td><td>${src(sr)}</td></tr>`)
-        .join('')}
-        <tr class="fc-min"><th>Minimum reserve</th><td></td><td class="num"><strong>30%</strong></td><td>${src('MANUAL')}</td></tr></tbody></table>`,
-      { actions: src('FORECAST') }
-    )}
-    ${card(
-      warn ? 'Why this warning appeared' : fc.status === 'watch' ? 'Why storage is declining' : 'Why the outlook is stable',
-      `<ol class="why">${reasons.map((r) => `<li><span class="why-n" aria-hidden="true"></span><span>${esc(r)}</span></li>`).join('')}</ol>
-      <div class="fc-actions"><a class="btn btn--primary btn--sm" href="#/p/simulator">${icon('sliders', 15)} Test responses in simulator</a>${warn ? `<a class="btn btn--outline btn--sm" href="#/p/advisories">${icon('megaphone', 15)} Prepare advisory</a>` : ''}</div>
-      <p class="fine">Forecasts are projections based on current conditions${S.weatherActive() ? ' and the weather outlook' : ''}. They are not guaranteed.</p>`
-    )}
+      <div class="fc-proj">${rows
+        .map(([l, v]) => `<div class="${lowAt(v)}"><span>${l.replace('In ', '')}</span><strong>${pct(v)}</strong><div class="fc-proj-b"><i style="height:${Math.max(2, Math.min(100, v * 100))}%"></i><b style="bottom:${minPct}%"></b></div></div>`)
+        .join('')}</div>
+      <div class="kp-foot"><span>Minimum reserve <strong>${minPct}%</strong> (100 m³ firefighting reserve)</span>${src('MANUAL')}</div>
+    </section>
+    ${kpi({ label: 'Storage now', value: pct(fc.now), source: 'SIMULATED', sub: `${fmt(t.volML * 1000, 0)} m³ of 440 m³` })}
+    ${kpi({ label: 'In 24 hours', value: pct(fc.at24), source: 'FORECAST', sub: `${delta24 >= 0 ? '+' : '−'}${fmt(Math.abs(delta24), 0)} pts from now`, sev: fc.at24 <= S.MIN_RESERVE ? 'critical' : null })}
+    ${kpi({ label: 'Reaches reserve', value: below ? 'Now' : fc.crossH != null ? hoursLabel(fc.crossH) : 'Not in 72 h', source: 'FORECAST', sub: fc.crossH != null ? '<span class="txt-warn">Plan a response</span>' : 'No shortage expected', sev: fc.crossH != null ? (fc.crossH <= 6 ? 'critical' : 'warning') : null })}
+    ${kpi({ label: 'Weather effect', value: imp ? signed(imp.demandPct) : '—', unit: imp ? 'demand' : '', source: 'ESTIMATED', sub: imp ? (imp.supplyPct ? `Supply ${signed(imp.supplyPct)} today` : 'No change to supply today') : 'Weather forecast unavailable' })}
   </div>
+  ${card(
+    warn ? 'Why this warning appeared' : fc.status === 'watch' ? 'Why storage is declining' : 'Why the outlook is stable',
+    `<div class="fc-why"><ol class="why">${reasons.map((r) => `<li><span class="why-n" aria-hidden="true"></span><span>${esc(r)}</span></li>`).join('')}</ol>
+    <div class="fc-actions"><a class="btn btn--primary btn--sm" href="#/p/simulator">${icon('sliders', 15)} Test responses in simulator</a>${warn ? `<a class="btn btn--outline btn--sm" href="#/p/advisories">${icon('megaphone', 15)} Prepare advisory</a>` : ''}</div></div>
+    <p class="fine">Forecasts are projections based on current conditions${S.weatherActive() ? ' and the weather outlook' : ''}. They are not guaranteed.</p>`
+  )}
+  ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Poblacion 13 reservoir level, past 24 hours (simulated) and next 48 hours (forecast)${S.forecastBand() ? '. Shaded area shows the likely range from past forecast errors.' : ''}` })}
   ${weatherCard()}
-  ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Poblacion 13 reservoir level · past 24 h (simulated telemetry) and next 48 h (forecast)${S.forecastBand() ? ' · shaded area shows the likely range from past forecast errors' : ''}` })}
   ${accuracyCard()}
   ${card(
     'Forecast inputs',
     `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Input</th><th class="num">Value</th><th>Source</th><th>Notes</th></tr></thead><tbody>
-      <tr><td>Current storage</td><td class="num">${fmt(t.volML, 2)} ML (${pct(fc.now)})</td><td>${src('SIMULATED')}</td><td class="muted">Central Reservoir, 2.0 ML capacity</td></tr>
-      <tr><td>Production capacity</td><td class="num">${fmt(S.productionCapacity(), 2)} ML/day</td><td>${src('SIMULATED')}</td><td class="muted">Intake + Deep Wells 1 & 2${s.pumpsOffline.length ? ' · PS-01 offline' : ''}</td></tr>
-      <tr><td>Reservoir inflow</td><td class="num">${fmt(S.mlToLs(t.production + t.transfer), 0)} L/s</td><td>${src('SIMULATED')}</td><td class="muted">Plant output follows demand above 72% operating level</td></tr>
+      <tr><td>Current storage</td><td class="num">${fmt(t.volML, 2)} ML (${pct(fc.now)})</td><td>${src('SIMULATED')}</td><td class="muted">Poblacion 13 reservoir, 440 m³ capacity</td></tr>
+      <tr><td>Production capacity</td><td class="num">${fmt(S.productionCapacity(), 2)} ML/day</td><td>${src('SIMULATED')}</td><td class="muted">Caramayon, Masacpasac, Kulador plant and deep wells${s.pumpsOffline.length ? `; ${s.pumpsOffline.join(', ')} offline` : ''}</td></tr>
+      <tr><td>Reservoir inflow</td><td class="num">${fmt(S.mlToLs(t.production + t.transfer), 0)} L/s</td><td>${src('SIMULATED')}</td><td class="muted">Plant output follows demand near the normal operating level</td></tr>
       <tr><td>Consumption history (24 h avg)</td><td class="num">${fmt(hist24, 2)} ML/day</td><td>${src('SIMULATED')}</td><td class="muted">From outlet flow meter</td></tr>
       <tr><td>Current demand</td><td class="num">${fmt(t.demand, 2)} ML/day</td><td>${src('SIMULATED')}</td><td class="muted">Instantaneous rate incl. estimated losses</td></tr>
       <tr><td>Estimated demand (next 24 h avg)</td><td class="num">${fmt(fc.avgDemand, 2)} ML/day</td><td>${src('ESTIMATED')}</td><td class="muted">Daily demand pattern × current demand factor${imp ? ' × weather' : ''}</td></tr>
       <tr><td>Weather: demand adjustment (today)</td><td class="num">${imp ? signed(imp.demandPct) : '—'}</td><td>${src('ESTIMATED')}</td><td class="muted">+${WEATHER_BASE.hotPctPerDeg}% per °C above ${weatherState().climate ? `the ${fmt(weatherState().climate.normalTmax, 1)} °C climate normal (ERA5 ${weatherState().climate.years})` : `a ${WEATHER_BASE.tmax} °C daily high`} (Open-Meteo forecast)</td></tr>
       <tr><td>Weather: supply adjustment (today)</td><td class="num">${imp ? signed(imp.supplyPct) : '—'}</td><td>${src('ESTIMATED')}</td><td class="muted">−15% at ≥${WEATHER_BASE.heavyRainMm} mm/day rain, −5% at ≥${WEATHER_BASE.moderateRainMm} mm, −6% in a dry spell${weatherState().climate ? ` (under ${WEATHER_BASE.dryPctOfNormal}% of normal 30-day rain)` : ''}</td></tr>
-      <tr><td>Reserve threshold</td><td class="num">30% (0.60 ML)</td><td>${src('MANUAL')}</td><td class="muted">Operating policy</td></tr>
+      <tr><td>Reserve threshold</td><td class="num">${Math.round(S.MIN_RESERVE * 100)}% (100 m³)</td><td>${src('MANUAL')}</td><td class="muted">Firefighting reserve, CWD Water Safety Plan 2022</td></tr>
     </tbody></table></div><p class="fine">Model: mass balance (storage + production − estimated demand) in 15-minute steps over 72 hours, adjusted by the daily weather outlook. Updated with every telemetry update.</p>`
   )}`;
 }
@@ -203,7 +209,7 @@ function accuracyCard() {
     return `<button class="fca-t ${a.h === fcaH ? 'is-on' : ''}" data-action="fca-h" data-h="${a.h}" aria-pressed="${a.h === fcaH}">
       <span class="fca-h">${horizonLabel(a.h)}</span>
       <span class="fca-v">${a.mae == null ? '—' : `±${fmt(a.mae, 1)}`}<small>${a.mae == null ? '' : 'pts avg error'}</small></span>
-      <span class="fca-s">${ok == null ? `${dot('off')}${a.n < S.FC_MIN_SAMPLES ? `Collecting · ${a.n}/${S.FC_MIN_SAMPLES} checks` : ''}` : `${dot(ok ? 'ok' : 'warn')}${ok ? 'Within' : 'Outside'} target of ±${a.target} pts`}</span>
+      <span class="fca-s ${ok === false ? 'txt-warn' : ''}">${ok == null ? (a.n < S.FC_MIN_SAMPLES ? `Collecting, ${a.n} of ${S.FC_MIN_SAMPLES} checks` : '') : `${ok ? 'Within' : 'Outside'} target of ±${a.target} pts`}</span>
       <dl><div><dt>Within target</dt><dd>${a.withinPct == null ? '—' : `${fmt(a.withinPct, 0)}%`}</dd></div><div><dt>Bias</dt><dd>${a.bias == null ? '—' : `${a.bias > 0 ? '+' : a.bias < 0 ? '−' : ''}${fmt(Math.abs(a.bias), 1)}`}</dd></div><div><dt>Demand error</dt><dd>${a.mape == null ? '—' : `${fmt(a.mape, 1)}%`}</dd></div><div><dt>Checks</dt><dd>${a.n}</dd></div></dl>
     </button>`;
   };
@@ -226,16 +232,16 @@ function accuracyCard() {
   return card(
     'Forecast accuracy',
     `<div class="fca-tiles">${acc.map(tile).join('')}</div>
-    <div class="fca-chart"><div class="fca-ch-h"><strong>Forecast vs measured · ${horizonLabel(fcaH)}</strong><span>Last ${sel.length} checks</span></div>${chart}</div>
+    <div class="fca-chart"><div class="fca-ch-h"><strong>Forecast vs measured, ${horizonLabel(fcaH)}</strong><span>Last ${sel.length} checks</span></div>${chart}</div>
     ${recent.length ? `<div class="tbl-wrap"><table class="tbl fca-tbl"><thead><tr><th>Forecast made</th><th>Horizon</th><th class="num">Predicted</th><th class="num">Measured</th><th class="num">Error</th><th>Result</th></tr></thead><tbody>${recent
       .map((e) => {
         const err = (e.pred - e.actual) * 100;
         const ok = Math.abs(err) <= S.FC_TARGETS.level[e.h];
-        return `<tr><td>${fmtTime(e.made)}</td><td>+${e.h} h</td><td class="num">${fmt(e.pred * 100, 1)}%</td><td class="num">${fmt(e.actual * 100, 1)}%</td><td class="num">${err > 0 ? '+' : err < 0 ? '−' : ''}${fmt(Math.abs(err), 1)} pts</td><td><span class="fca-r">${dot(ok ? 'ok' : 'warn')}${ok ? 'Within target' : 'Outside target'}</span></td></tr>`;
+        return `<tr><td>${fmtTime(e.made)}</td><td>+${e.h} h</td><td class="num">${fmt(e.pred * 100, 1)}%</td><td class="num">${fmt(e.actual * 100, 1)}%</td><td class="num">${err > 0 ? '+' : err < 0 ? '−' : ''}${fmt(Math.abs(err), 1)} pts</td><td><span class="fca-r ${ok ? '' : 'txt-warn'}">${ok ? 'Within target' : 'Outside target'}</span></td></tr>`;
       })
       .join('')}</tbody></table></div>` : ''}
     <p class="fine">Each forecast is saved and later compared with the measured reservoir level. Error is in percentage points of storage; demand error is the average percentage difference. Targets (±${S.FC_TARGETS.level[1]} / ±${S.FC_TARGETS.level[6]} / ±${S.FC_TARGETS.level[24]} pts) are proposed and should be agreed with the utility. <strong>Measured values here come from simulated telemetry</strong>, so these scores show how the method works; they become a real accuracy measure once meter data is connected.</p>`,
-    { sub: `${scored} forecasts scored · ${pending} waiting for their target time`, actions: src('SIMULATED') }
+    { sub: `${scored} forecasts scored, ${pending} waiting for their target time`, actions: src('SIMULATED') }
   );
 }
 
@@ -277,7 +283,7 @@ function scenarioCard(title, sub, fc, base, color, tone) {
     series: [{ name: title, color, values: pts.map((p) => p.pct * 100), area: true, dash: tone === 'b', endLabel: true }],
     labels: pts.map((p) => `+${p.h} h`),
     xTicks: [0, 24, 48, 72].map((h) => ({ i: pts.findIndex((p) => p.h >= h), label: h ? `+${h} h` : 'Now' })),
-    thresholds: [{ y: 30, label: 'Min. reserve', color: '#C0262D' }],
+    thresholds: [{ y: S.MIN_RESERVE * 100, label: 'Min. reserve', color: '#C0262D' }],
     yMin: 0,
     yMax: 100,
     yFmt: (v) => `${Math.round(v)}%`,
@@ -319,7 +325,7 @@ function describe() {
   if (sim.restorePumps) parts.push('failed pump restored');
   if (sim.inflowPct) parts.push(`inflow ${sim.inflowPct > 0 ? '+' : ''}${sim.inflowPct}%`);
   if (sim.demandPct) parts.push(`demand ${sim.demandPct > 0 ? '+' : ''}${sim.demandPct}%`);
-  return parts.join(' · ');
+  return parts.join('; ');
 }
 
 function baseline() {

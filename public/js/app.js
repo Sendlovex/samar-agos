@@ -251,12 +251,14 @@ function profileFields(p = {}) {
     </div>
     ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true, hint: 'Used only by your water provider for service updates.' })}`;
 }
-const readProfileFields = () => ({
-  name: document.getElementById('pf-name').value.trim(),
-  barangay: document.getElementById('pf-brgy').value,
-  address: document.getElementById('pf-addr').value.trim(),
-  phone: document.getElementById('pf-phone').value.trim(),
-});
+// Staff settings omit barangay and address; only fields present on the form are read.
+const readProfileFields = () => {
+  const v = (id) => document.getElementById(id)?.value;
+  const d = { name: (v('pf-name') || '').trim(), phone: (v('pf-phone') || '').trim() };
+  if (v('pf-brgy') != null) d.barangay = v('pf-brgy');
+  if (v('pf-addr') != null) d.address = v('pf-addr').trim();
+  return d;
+};
 
 function renderOnboarding() {
   current = null;
@@ -368,6 +370,58 @@ function openProfileEditor() {
   });
 }
 
+// Account settings: profile, sign-in email and password in one dialog.
+let acctTab = 'profile';
+function accountSettingsBody() {
+  const ses = B.getSession();
+  const staff = !!ses?.isProvider && role === 'provider';
+  const p = ses?.profile || {};
+  const tab = (id, label) => `<button class="${acctTab === id ? 'is-on' : ''}" data-action="acct-tab" data-id="${id}" aria-pressed="${acctTab === id}">${label}</button>`;
+  const pwField = (id, label, hint = '') => field(label, `<div class="auth-pw"><input type="password" id="${id}" autocomplete="${id.endsWith('cur') ? 'current-password' : 'new-password'}"/><button type="button" class="auth-show" data-action="auth-showpw" data-for="${id}" aria-pressed="false">Show</button></div>`, { id, req: true, hint });
+  const google = `<div class="as-note">${icon('info', 16)}<span>You sign in with Google, so your email and password are managed in your Google account.</span></div>`;
+  let body = '';
+  if (acctTab === 'profile')
+    body = `<form class="form" id="pe-form" onsubmit="return false">${
+      staff
+        ? `${field('Full name', `<input id="pf-name" value="${esc(p.name || '')}" autocomplete="name" required/>`, { id: 'pf-name', req: true })}
+           ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true })}`
+        : profileFields(p)
+    }<div class="as-a"><button class="btn btn--primary btn--sm" data-action="profile-save">Save profile</button></div></form>`;
+  else if (acctTab === 'email')
+    body = !B.usesPassword()
+      ? google
+      : `<form class="form" id="ae-form" onsubmit="return false">
+        ${field('Current email', `<input value="${esc(ses.email)}" disabled/>`, {})}
+        ${field('New email', `<input type="email" id="ae-new" autocomplete="email"/>`, { id: 'ae-new', req: true, hint: 'We send a confirmation link to the new address. Your email changes after you open it.' })}
+        ${pwField('ae-cur', 'Current password')}
+        <div class="auth-err" role="alert" hidden></div>
+        <div class="as-a"><button class="btn btn--primary btn--sm" data-action="acct-email">Send confirmation link</button></div></form>`;
+  else
+    body = !B.usesPassword()
+      ? google
+      : `<form class="form" id="ap-form" onsubmit="return false">
+        ${pwField('ap-cur', 'Current password')}
+        ${pwField('ap-new', 'New password', 'At least 8 characters.')}
+        ${pwField('ap-new2', 'Confirm new password')}
+        <div class="auth-err" role="alert" hidden></div>
+        <div class="as-a"><button class="btn btn--primary btn--sm" data-action="acct-password">Change password</button></div></form>`;
+  return `<div class="as-tabs" role="group" aria-label="Settings section">${tab('profile', 'Profile')}${tab('email', 'Email')}${tab('password', 'Password')}</div><div class="as-b">${body}</div>`;
+}
+function openAccountSettings() {
+  if (!B.FB_ENABLED) return showToast({ msg: 'Account settings are available when signed in to the SAMAR-AGOS database.', kind: 'info' });
+  acctTab = 'profile';
+  openModal('Account settings', `<div id="as-body">${accountSettingsBody()}</div>`);
+}
+const paintAccountSettings = () => {
+  const b = document.getElementById('as-body');
+  if (b) b.innerHTML = accountSettingsBody();
+};
+function acctError(formId, e) {
+  const box = document.querySelector(`#${formId} .auth-err`);
+  const msg = ['auth/invalid-credential', 'auth/wrong-password'].includes(e?.code) ? 'Your current password is incorrect.' : e?.code ? B.authMessage(e) : e?.message || 'Something went wrong.';
+  if (box) (box.hidden = false), (box.innerHTML = `${icon('alert', 15)}<span>${esc(msg)}</span>`);
+}
+
 async function openTeamAccess() {
   const emails = await B.getProviderEmails();
   const me = B.getSession().email;
@@ -410,9 +464,9 @@ function renderShell(area, page, html) {
       <header class="tb">
         <button class="icon-btn tb-menu" data-action="sb-open" aria-label="Open navigation">${icon('menu', 20)}</button>
         <div class="tb-mlogo">${logoMark(28)}</div>
-        ${res ? `<span id="tb-status">${headerStatus()}</span>` : `<div class="tb-fresh" id="tb-fresh">${freshness()}</div>`}
         <div class="tb-right">
-          ${res ? '' : `<span id="tb-status">${headerStatus()}</span>`}
+          <span id="tb-status">${headerStatus()}</span>
+          <span class="tb-div" aria-hidden="true"></span>
           ${!res && isDemoMode() ? `<button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>` : ''}
           <button type="button" class="icon-btn bell" data-action="notif-panel" data-aud="${aud}" aria-haspopup="dialog" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></button>
           ${accountMenu(res)}
@@ -445,12 +499,10 @@ function accountMenu(res) {
   const email = B.FB_ENABLED ? B.getSession()?.email : '';
   const av = `<span class="avatar ${res ? '' : 'avatar--navy'}">${user.initials}</span>`;
   return `<details class="acct">
-    <summary class="acct-btn" aria-label="Account menu for ${esc(user.name)}">${av}${icon('chev-d', 14)}</summary>
+    <summary class="acct-btn" aria-label="Account menu for ${esc(user.name)}"><span class="acct-id"><strong>${esc(user.name)}</strong></span>${icon('chev-d', 14)}</summary>
     <div class="acct-menu">
-      <div class="acct-head">${av}<span><strong>${esc(user.name)}</strong><span>${esc(email || (res ? user.address : user.role))}</span></span></div>
-      ${res ? `<a href="#/r/profile">${icon('user', 16)}<span>Profile</span></a>` : ''}
-      ${canSwitchRole() ? `<button data-action="switch-role">${icon(res ? 'activity' : 'home', 16)}<span>${res ? 'Provider view' : 'Resident view'}</span></button>` : ''}
-      ${!res && B.FB_ENABLED ? `<button data-action="team-open">${icon('users', 16)}<span>Staff access</span></button>` : ''}
+      <div class="acct-head">${av}<span><strong>${esc(user.name)}</strong>${email || res ? `<span>${esc(email || user.address)}</span>` : ''}</span></div>
+      <button data-action="account-settings">${icon('user', 16)}<span>Account settings</span></button>
       ${!res ? `<button data-action="demo-toggle" aria-pressed="${isDemoMode()}">${icon('play', 16)}<span>Demo mode: ${isDemoMode() ? 'On' : 'Off'}</span></button>` : ''}
       <button data-action="logout" class="acct-out">${icon('logout', 16)}<span>Sign out</span></button>
     </div>
@@ -466,19 +518,17 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') document.querySelectorAll('details.acct[open]').forEach((d) => (d.open = false));
 });
 
-function freshness() {
-  const t = S.getState().tele;
-  return `<span class="live-dot" aria-hidden="true"></span><span class="src src--sim">SIMULATED TELEMETRY</span><span class="tb-upd"><span class="tb-upd-l">Last update: </span><span class="upd" data-ts="${t.lastUpdate}">${relTime(t.lastUpdate)}</span></span><span class="tb-acc" title="Each 3-second update advances the simulation by 5 minutes">· accelerated time ×100</span>`;
-}
+// Top-bar status: a small label over a dot + word (no pill), linking to the overview.
 function headerStatus() {
+  const cell = (href, k, sev, v, title) => `<a href="${href}" class="tb-sys tb-sys--${SEV[sev]?.cls || 'off'}" title="${esc(title)}"><span class="tb-sys-k">${esc(k)}</span><span class="tb-sys-v">${esc(v)}</span></a>`;
   if (current?.area === 'r') {
     const r = S.residentService();
     const label = r.label.charAt(0) + r.label.slice(1).toLowerCase();
-    return `<a href="#/r/home" class="tb-sys" title="Service status for your area">${status(r.sev, `Zone ${esc(RESIDENT.zone)} · ${esc(label)}`)}</a>`;
+    return cell('#/r/home', `Brgy. ${RESIDENT.barangay}`, r.sev, label, 'Water service in your area');
   }
   const o = S.overallStatus();
-  const label = { normal: 'System Normal', warning: 'System Warning', critical: 'System Critical', offline: 'Data Unavailable' }[o.sev];
-  return `<a href="#/p/overview" class="tb-sys">${status(o.sev, label)}</a>`;
+  const label = { normal: 'Normal', warning: 'Warning', critical: 'Critical', offline: 'Data unavailable' }[o.sev];
+  return cell('#/p/overview', 'System status', o.sev, label, 'Overall water system status');
 }
 
 // ---------------------------------------------------------------- live updates
@@ -500,8 +550,6 @@ S.on('tick', () => {
     });
   v.onTick?.(root, current.params);
   syncMaps();
-  const f = document.getElementById('tb-fresh');
-  if (f) f.innerHTML = freshness();
   const st = document.getElementById('tb-status');
   if (st) st.innerHTML = headerStatus();
   updateBell();
@@ -572,6 +620,37 @@ register({
     el.setAttribute('aria-pressed', String(show));
   },
   'profile-edit': () => openProfileEditor(),
+  'account-settings': () => openAccountSettings(),
+  'acct-tab': (el) => ((acctTab = el.dataset.id), paintAccountSettings()),
+  'acct-email': (el) =>
+    busy(el, async () => {
+      const next = document.getElementById('ae-new').value.trim();
+      const pw = document.getElementById('ae-cur').value;
+      try {
+        if (!/^\S+@\S+\.\S+$/.test(next)) throw new Error('Enter a valid new email address.');
+        if (next.toLowerCase() === B.getSession().email) throw new Error('That is already your email.');
+        await B.changeEmail(next, pw);
+        closeOverlay();
+        showToast({ msg: `Confirmation link sent to ${next}. Open it to finish changing your email.`, kind: 'success' });
+      } catch (e) {
+        acctError('ae-form', e);
+      }
+    }),
+  'acct-password': (el) =>
+    busy(el, async () => {
+      const cur = document.getElementById('ap-cur').value;
+      const next = document.getElementById('ap-new').value;
+      try {
+        if (next.length < 8) throw new Error('Use a new password with at least 8 characters.');
+        if (next !== document.getElementById('ap-new2').value) throw new Error('The new passwords do not match.');
+        if (next === cur) throw new Error('Choose a password different from your current one.');
+        await B.changePassword(cur, next);
+        closeOverlay();
+        showToast({ msg: 'Password changed', kind: 'success' });
+      } catch (e) {
+        acctError('ap-form', e);
+      }
+    }),
   'profile-save': (el) =>
     busy(el, async () => {
       const data = readProfileFields();
@@ -612,7 +691,6 @@ register({
   'demo-panel': () => openDemoPanel(),
   'demo-toggle': () => {
     setDemoMode(!isDemoMode());
-    showToast({ msg: isDemoMode() ? 'Demo mode on — scenario controls are shown' : 'Demo mode off', kind: 'info' });
     render();
   },
   'apply-scenario': (el) =>
@@ -660,15 +738,15 @@ function openDemoPanel() {
   const act = new Set(s.activeScenarios);
   openDrawer(
     'Demo scenarios',
-    `<div class="banner banner--info">${icon('info', 18)}<div class="banner-c"><strong>Demo mode.</strong><div>Scenarios change simulated readings only, modelled on documented Catbalogan events. Effects show in charts, alerts, forecasts and the resident portal.</div></div></div>
+    `
     <h3 class="sec-t">Trigger a system scenario</h3>
     <div class="scn-list">${Object.entries(SCENARIOS)
       .map(
         ([k, v]) => `<div class="scn ${act.has(k) ? 'is-on' : ''}"><div><strong>${v.label}</strong>${act.has(k) ? ' ' + status('warning', 'Active') : ''}<p>${v.desc}</p></div><button class="btn btn--sm ${k === 'normal' ? 'btn--outline' : 'btn--primary'}" data-action="apply-scenario" data-id="${k}">${k === 'normal' ? 'Restore normal' : 'Apply'}</button></div>`
       )
       .join('')}</div>
-    <button class="btn btn--danger-ghost" data-action="reset-demo">${icon('refresh', 15)} Reset demo scenarios</button>`,
-    { sub: 'Simulated readings · not live control' }
+    <button class="btn btn--danger-ghost" data-action="reset-demo">Reset demo scenarios</button>`,
+    { sub: 'Simulated readings, not live control' }
   );
 }
 
