@@ -1,6 +1,6 @@
 // Resident portal views — mobile-first.
 import * as S from '../store.js';
-import { RESIDENT, REPORT_TYPES, REPORT_STEPS, ZONES, zoneById, reportTypeLabel, UTILITY } from '../data.js';
+import { RESIDENT, REPORT_TYPES, REPORT_STEPS, ZONES, zoneById, reportTypeLabel, UTILITY, WATER_RATES, waterBill, CWD_FACTS } from '../data.js';
 import { icon, status, src, card, alertBanner, timeline, empty, register, registerInputs, openModal, closeOverlay, field, updatedAgo, SEV, actions, busy } from '../ui.js';
 import { lineChart, barChart, gaugeBar } from '../charts.js';
 import { renderMap, svgPoint } from '../map.js';
@@ -89,7 +89,7 @@ function homeStatus() {
   }
   return `<section class="hs hs--${sevCls}" aria-labelledby="hs-title">
     <div class="hs-top">
-      <div><div class="hs-k">Your Area</div><div class="hs-area">Barangay ${esc(RESIDENT.barangay)}</div><div class="hs-zone">${esc(z.name)}</div></div>
+      <div><div class="hs-k">Your Area</div><div class="hs-area">Barangay ${esc(RESIDENT.barangay)}</div><div class="hs-zone">Served by ${esc(UTILITY.name)}</div></div>
       <div class="hs-ic">${icon(SEV[svc.sev].icon, 28)}</div>
     </div>
     <div class="hs-k">Current Service</div>
@@ -232,9 +232,9 @@ const report = {
           </div>
           ${
             d.useHome
-              ? `<div class="loc-box">${icon('home', 18)}<div><strong>${esc(RESIDENT.address)}</strong><span>Account ${RESIDENT.account} · ${esc(myZone().short)}</span></div></div>`
+              ? `<div class="loc-box">${icon('home', 18)}<div><strong>${esc(RESIDENT.address)}</strong><span>Brgy. ${esc(myZone().short)}</span></div></div>`
               : `<div class="grid-2">${field('Barangay', `<select id="rp-brgy" data-change="rp-brgy">${ZONES.flatMap((zz) => zz.barangays).map((b) => `<option ${b === d.barangay ? 'selected' : ''}>${b}</option>`).join('')}</select>`, { id: 'rp-brgy', req: true })}
-                 ${field('Street / landmark', `<input id="rp-locd" value="${esc(d.location === RESIDENT.address ? '' : d.location)}" data-input="rp-locd" placeholder="e.g. near Mercedes chapel"/>`, { id: 'rp-locd', req: true })}</div>${e.location ? `<div class="err" role="alert">${icon('alert', 14)} Enter a street or landmark.</div>` : ''}`
+                 ${field('Street / landmark', `<input id="rp-locd" value="${esc(d.location === RESIDENT.address ? '' : d.location)}" data-input="rp-locd" placeholder="e.g. near the barangay hall"/>`, { id: 'rp-locd', req: true })}</div>${e.location ? `<div class="err" role="alert">${icon('alert', 14)} Enter a street or landmark.</div>` : ''}`
           }
           <div class="field"><span class="field-l">Map location</span><p class="field-h">Tap the map or drag the red pin to where the problem is. Use the buttons to zoom.</p>
             <div id="rp-map">${renderMap({ mode: 'picker', pin: d.pin, home: true })}</div>
@@ -494,7 +494,7 @@ const advisories = {
     const other = active.filter((a) => !a.areas.includes(RESIDENT.zone));
     const past = s.advisories.filter((a) => a.status !== 'Active').slice(0, 6);
     return `<div class="r-page r-page--narrow">
-      <div class="page-h"><div><h1>Service Advisories</h1><p class="page-sub">Official notices from ${esc(UTILITY.name)} (fictional).</p></div></div>
+      <div class="page-h"><div><h1>Service Advisories</h1><p class="page-sub">Official notices from ${esc(UTILITY.name)}.</p></div></div>
       <h2 class="sec-t">Your area — ${esc(myZone().name)}</h2>
       ${mine.length ? `<div class="stack">${mine.map((a) => advisoryCard(a)).join('')}</div>` : empty('No active advisories for your area', '', 'check-circle')}
       ${other.length ? `<h2 class="sec-t">Other areas</h2><div class="stack">${other.map((a) => advisoryCard(a, { compact: true })).join('')}</div>` : ''}
@@ -503,55 +503,68 @@ const advisories = {
   },
 };
 
-// ---------------------------------------------------------------- CONSUMPTION
+// ---------------------------------------------------------------- CONSUMPTION (bill estimator, official CWD rates)
+let billM3 = Math.round(CWD_FACTS.avgM3PerConnection * 10) / 10;
+let billClass = 'Domestic / Government';
+function billBreakdown() {
+  const r = WATER_RATES.classes[billClass];
+  const rows = [['First 10 m³ (minimum charge)', Math.min(billM3, 10), r.min, true]];
+  let left = Math.max(0, billM3 - 10);
+  r.tiers.forEach((rate, i) => {
+    const use = Math.min(left, i < 3 ? 10 : Infinity);
+    rows.push([WATER_RATES.tierLabels[i], use, use * rate, false, rate]);
+    left -= use;
+  });
+  return rows;
+}
+function billResult() {
+  const total = waterBill(billM3, billClass);
+  const rows = billBreakdown();
+  return `<div class="bill-total"><span>Estimated monthly bill</span><strong>₱${fmt(total, 2)}</strong><em>${fmt(billM3, 1)} m³ · ${esc(billClass)}</em></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Consumption block</th><th class="num">m³</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>
+    ${rows.map(([l, m3, amt, min, rate]) => `<tr><td>${esc(l)}</td><td class="num">${fmt(m3, 1)}</td><td class="num">${min ? 'flat' : `₱${fmt(rate, 2)}/m³`}</td><td class="num">₱${fmt(amt, 2)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
 const consumption = {
   title: 'My Consumption',
   render() {
-    const c = st().consumption;
-    const cur = c.current;
-    const prev = c.periods[c.periods.length - 1];
-    const days = cur.daily.length;
-    const periodDays = Math.round((cur.end - cur.start) / 864e5) + 1;
-    const prevDays = Math.round((prev.end - prev.start) / 864e5) + 1;
-    const avgCur = cur.toDate / days;
-    const avgPrev = prev.m3 / prevDays;
-    const diff = ((avgCur - avgPrev) / avgPrev) * 100;
-    const projected = avgCur * periodDays;
-    const bars = [
-      ...c.periods.map((p) => ({ label: new Date(p.end).toLocaleDateString('en-US', { month: 'short' }), value: p.m3, hatch: p.source === 'ESTIMATED', color: '#1D6FB8', tip: `${fmtDateShort(p.start)} – ${fmtDateShort(p.end)} · ${p.source === 'ESTIMATED' ? 'ESTIMATED reading' : 'Measured reading'}${p.note ? '<br/>' + esc(p.note) : ''}` })),
-      { label: 'Now', value: cur.toDate, color: '#13A8C4', tip: `Current period to date · Measured (last reading ${fmtDateTime(cur.lastReading)})` },
-    ];
-    const dailyChart = barChart({ id: 'daily-use', label: 'Daily water use this period', bars: cur.daily.map((v, i) => ({ label: fmtDateShort(cur.start + i * 864e5).split(' ')[1], value: +(v * 1000).toFixed(0), color: '#1D6FB8', tip: `${fmtDate(cur.start + i * 864e5)} · Measured` })), yFmt: (v) => `${v} L`, h: 190, labelEvery: 3 });
     return `<div class="r-page">
-      <div class="page-h"><div><h1>My Consumption</h1><p class="page-sub">Account ${RESIDENT.account} · Meter ${RESIDENT.meter}</p></div></div>
-      <div class="note note--plain">${icon('info', 16)}<p><strong>Measured</strong> values are actual meter readings. <strong>Estimated</strong> values are calculated when a meter could not be read — they are never presented as actual readings.</p></div>
-      <div class="cons-grid">
-        <div class="cons cons--main">
-          <div class="cons-k">Current billing period · to date</div>
-          <div class="cons-v">${fmt(cur.toDate, 1)} <span>m³</span></div>
-          <div class="cons-s">${src('MEASURED')} Measured reading · ${fmtDateTime(cur.lastReading)}</div>
-          <div class="cons-p">${fmtDateShort(cur.start)} – ${fmtDateShort(cur.end)} · day ${days} of ${periodDays}</div>
-          ${gaugeBar((days / periodDays) * 100)}
-          <div class="cons-proj">Projected period total: <strong>${fmt(projected, 1)} m³</strong> ${src('ESTIMATED')}</div>
-        </div>
-        <div class="cons"><div class="cons-k">Previous billing period</div><div class="cons-v cons-v--sm">${fmt(prev.m3, 1)} <span>m³</span></div><div class="cons-s">${src(prev.source)} ${prev.source === 'MEASURED' ? 'Measured reading' : 'Estimated reading'}</div><div class="cons-p">${fmtDateShort(prev.start)} – ${fmtDateShort(prev.end)}</div></div>
-        <div class="cons"><div class="cons-k">Change in daily use</div><div class="cons-v cons-v--sm ${diff > 0 ? 'up' : 'down'}">${icon(diff > 0 ? 'arrow-up' : 'arrow-down', 18)} ${fmt(Math.abs(diff), 1)}<span>%</span></div><div class="cons-s">${diff > 0 ? 'Higher' : 'Lower'} than previous period (per-day average)</div></div>
-        <div class="cons"><div class="cons-k">Average daily usage</div><div class="cons-v cons-v--sm">${fmt(avgCur * 1000, 0)} <span>L/day</span></div><div class="cons-s">Previous: ${fmt(avgPrev * 1000, 0)} L/day</div></div>
-      </div>
+      <div class="page-h"><div><h1>My Consumption</h1><p class="page-sub">${esc(UTILITY.name)} · water rates effective ${esc(WATER_RATES.effective)}</p></div></div>
+      ${alertBanner('info', 'Meter readings are not linked yet', 'Your monthly meter readings will appear here once your account is connected to the water district’s billing records. Meanwhile, estimate your bill with the official rate schedule below.')}
       <div class="r-grid">
-        <div class="r-col">${card('Historical consumption', barChart({ id: 'cons-hist', label: 'Monthly consumption, cubic meters', bars, yFmt: (v) => `${fmt(v, v < 10 && v % 1 ? 1 : 0)}`, h: 220, legendHtml: `<div class="ch-legend"><span><i style="background:#1D6FB8"></i>Measured</span><span><i class="hatch-sw"></i>Estimated</span><span><i style="background:#13A8C4"></i>Current period (to date)</span></div>` }), { sub: 'Cubic meters (m³) per billing period' })}</div>
-        <div class="r-col">${card('Daily use this period', dailyChart, { sub: 'Liters per day · measured meter reads' })}</div>
+        <div class="r-col">${card(
+          'Bill estimator',
+          `<form class="form bill-form" onsubmit="return false">
+            ${field('Monthly consumption (m³)', `<input type="number" id="bill-m3" min="0" max="500" step="0.1" value="${billM3}" data-input="bill"/>`, { id: 'bill-m3', hint: `Average residential use in Catbalogan: 16.2 m³ per month (${CWD_FACTS.asOf}).` })}
+            ${field('Customer class', `<select id="bill-class" data-change="bill">${Object.keys(WATER_RATES.classes).map((c) => `<option ${c === billClass ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`, { id: 'bill-class' })}
+          </form>
+          <div id="bill-out">${billResult()}</div>
+          <p class="fine">Minimum charge shown for a ½-inch meter. Source: ${esc(WATER_RATES.source)}. Your actual bill may include other charges.</p>`,
+          { actions: src('MANUAL') }
+        )}</div>
+        <div class="r-col">${card(
+          'How Catbalogan uses water',
+          `<dl class="kv kv--2">
+            <div><dt>Average use per connection</dt><dd>${fmt(CWD_FACTS.avgM3PerConnection, 1)} m³ / month</dd></div>
+            <div><dt>Average residential use</dt><dd>16.2 m³ / month</dd></div>
+            <div><dt>Per person</dt><dd>${fmt(CWD_FACTS.lpcd, 1)} liters / day</dd></div>
+            <div><dt>Active connections</dt><dd>${fmt(CWD_FACTS.activeConnections)}</dd></div>
+            <div><dt>Water lost before billing</dt><dd>${CWD_FACTS.nrwPct}% (non-revenue water)</dd></div>
+            <div><dt>Barangays served</dt><dd>${CWD_FACTS.barangaysServed} of ${CWD_FACTS.barangaysTotal}</dd></div>
+          </dl><p class="fine">Source: ${esc(CWD_FACTS.source)}.</p>`
+        )}</div>
       </div>
-      ${card(
-        'Billing period readings',
-        `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Period</th><th class="num">Consumption</th><th>Reading type</th><th>Note</th></tr></thead><tbody>
-        <tr><td>${fmtDateShort(cur.start)} – ${fmtDateShort(cur.end)} <span class="muted">(in progress)</span></td><td class="num">${fmt(cur.toDate, 1)} m³ to date</td><td>${src('MEASURED')}</td><td class="muted">Projected ${fmt(projected, 1)} m³ (estimate)</td></tr>
-        ${[...c.periods].reverse().map((p) => `<tr><td>${fmtDateShort(p.start)} – ${fmtDateShort(p.end)}</td><td class="num">${fmt(p.m3, 1)} m³</td><td>${src(p.source)}</td><td class="muted">${esc(p.note)}</td></tr>`).join('')}
-        </tbody></table></div>`
-      )}
     </div>`;
   },
 };
+registerInputs({
+  bill: (el) => {
+    if (el.id === 'bill-m3') billM3 = Math.max(0, +el.value || 0);
+    else billClass = el.value;
+    const o = document.getElementById('bill-out');
+    if (o) o.innerHTML = billResult();
+  },
+});
 
 // ---------------------------------------------------------------- WATER OUTLOOK
 const outlook = {
@@ -576,11 +589,11 @@ const outlook = {
       return `<section class="card"><div class="card-b">
         <div class="ol-h"><div><div class="ol-k">Next 24 Hours</div><div class="ol-s">${status(o.sev, o.label, { lg: true })}</div></div>${src('FORECAST')}</div>
         <p class="ol-t">${o.text}</p>${outlookStrip(fc)}</div></section>
-        ${card('System storage outlook', chart, { sub: 'Shared supply for all zones · projection, not a guarantee' })}
+        ${card('System storage outlook', chart, { sub: 'Shared supply for all served barangays · projection, not a guarantee' })}
         ${card(
           'What this means for you',
           fc.status === 'stable' || fc.status === 'watch'
-            ? `<ul class="bul"><li>No supply interruptions are expected from storage levels.</li><li>Local problems (like line repairs) may still affect your area — check advisories.</li><li>Use water wisely during peak hours (6–8 AM and 6–8 PM).</li></ul>`
+            ? `<ul class="bul"><li>No supply interruptions are expected from storage levels.</li><li>Local problems (like line repairs) may still affect your area — check advisories.</li><li>Use water wisely during the morning and evening peak hours, when pressure at the ends of the network is lowest.</li></ul>`
             : `<ul class="bul"><li>Store enough water for drinking and cooking for 1 day.</li><li>Avoid non-essential use (washing vehicles, watering plants).</li><li>Check <a href="#/r/water-access">Alternative Water Access</a> for confirmed distribution points.</li></ul>`
         )}
         <p class="fine">Based on current storage, production, and estimated demand. Forecasts are estimates and may change as conditions change. ${relTime(S.getState().tele.lastUpdate) ? '' : ''}</p>`;
@@ -593,16 +606,16 @@ const outlook = {
 
 // ---------------------------------------------------------------- ALTERNATIVE WATER ACCESS
 let altSel = null;
-const TANK_FOR = { 'AW-1': 'ET-01', 'AW-2': 'ET-02', 'AW-3': 'ET-03' };
 const waterAccess = {
   title: 'Alternative Water Access',
   regions: {
     list() {
       const s = st();
       const pts = s.altWater.filter((p) => p.active && p.confirmedAt).sort((a, b) => (b.zone === RESIDENT.zone) - (a.zone === RESIDENT.zone));
+      if (!pts.length) return empty('No distribution points right now', 'When your water provider sets up water distribution points, they will appear here.', 'droplets');
       return pts
         .map((p) => {
-          const tank = s.emergencyTanks.find((t) => t.id === TANK_FOR[p.id]);
+          const tank = p.tankId ? s.emergencyTanks.find((t) => t.id === p.tankId) : null;
           return `<article class="aw ${altSel === p.id ? 'is-sel' : ''}" id="aw-${p.id}">
           <div class="aw-h"><h3>${esc(p.name)}</h3>${altStatus(p.status)}</div>
           <div class="aw-addr">${icon('pin', 14)} ${esc(p.address)} ${p.zone === RESIDENT.zone ? '<span class="pill pill--blue">Your area</span>' : ''}</div>
@@ -640,8 +653,8 @@ const profile = {
       </div></section>
       ${card(
         'Water service account',
-        `<dl class="kv"><div><dt>Account number</dt><dd class="mono">${RESIDENT.account}</dd></div><div><dt>Meter number</dt><dd class="mono">${RESIDENT.meter}</dd></div><div><dt>Service address</dt><dd>${esc(RESIDENT.address)}</dd></div><div><dt>Service zone</dt><dd>${esc(myZone().name)}</dd></div><div><dt>Mobile number</dt><dd>${esc(RESIDENT.phone)}</dd></div><div><dt>Water provider</dt><dd>Maqueda Bay Water Service (fictional)</dd></div></dl>
-        ${RESIDENT.email ? '<p class="fine">Account and meter numbers are placeholders in this prototype.</p>' : ''}`
+        `<dl class="kv"><div><dt>Account number</dt><dd>Not linked yet</dd></div><div><dt>Service address</dt><dd>${esc(RESIDENT.address)}</dd></div><div><dt>Barangay</dt><dd>${esc(myZone().short)}</dd></div><div><dt>Mobile number</dt><dd>${esc(RESIDENT.phone || '—')}</dd></div><div><dt>Water provider</dt><dd>${esc(UTILITY.name)}</dd></div></dl>
+        <p class="fine">Linking your water district account number will be available once the billing system is connected.</p>`
       )}
       ${card(
         'Notification preferences',

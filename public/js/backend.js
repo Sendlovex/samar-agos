@@ -11,7 +11,7 @@ const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
 export const FB_ENABLED = !!FIREBASE_CONFIG.apiKey;
 
 export const COLLS = ['reports', 'incidents', 'workOrders', 'advisories', 'notifications', 'altWater', 'emergencyTanks', 'assets'];
-const SEED_COUNTERS = { report: 1042, incident: 42, wo: 191, adv: 32 };
+const SEED_COUNTERS = { report: 1, incident: 1, wo: 1, adv: 1 };
 
 let F = null; // SDK functions
 let auth = null;
@@ -109,11 +109,12 @@ export async function setNotifState(id, state) {
 }
 
 // ---------------------------------------------------------------- ticket numbers
+const YR = () => new Date().getFullYear();
 const FORMAT = {
-  report: (n) => `WR-2026-${n}`,
-  incident: (n) => `INC-2026-${String(n).padStart(3, '0')}`,
-  wo: (n) => `WO-2026-${String(n).padStart(4, '0')}`,
-  adv: (n) => `ADV-2026-${String(n).padStart(3, '0')}`,
+  report: (n) => `WR-${YR()}-${String(n).padStart(4, '0')}`,
+  incident: (n) => `INC-${YR()}-${String(n).padStart(3, '0')}`,
+  wo: (n) => `WO-${YR()}-${String(n).padStart(4, '0')}`,
+  adv: (n) => `ADV-${YR()}-${String(n).padStart(3, '0')}`,
 };
 export async function allocIds(kind, count = 1) {
   const ref = F.doc(db, 'counters', 'ids');
@@ -282,12 +283,17 @@ async function commitInChunks(ops) {
   }
 }
 
+export async function removeDoc(coll, id) {
+  if (!session?.isProvider) return;
+  synced[coll]?.delete(id);
+  await F.deleteDoc(F.doc(db, coll, id));
+}
+
 export async function seedRemote() {
   const s = S.buildSeedState();
   const ops = [];
   COLLS.forEach((coll) =>
     s[coll].forEach((item) => {
-      if (coll === 'notifications' && item.audience !== 'provider') return; // demo resident's history isn't needed
       const data = clean(item);
       ops.push((b) => b.set(F.doc(db, coll, item.id), data));
     })
@@ -298,13 +304,13 @@ export async function seedRemote() {
   await commitInChunks(ops);
 }
 
+// Demo reset: removes only simulated (demo-scenario) reports and restores normal operations.
+// Real records created by staff and residents are never deleted.
 export async function resetRemote() {
   const ops = [];
-  for (const coll of COLLS) {
-    const snap = await F.getDocs(F.collection(db, coll));
-    snap.docs.forEach((d) => ops.push((b) => b.delete(d.ref)));
-  }
+  const snap = await F.getDocs(F.query(F.collection(db, 'reports'), F.where('simulated', '==', true)));
+  snap.docs.forEach((d) => (ops.push((b) => b.delete(d.ref)), synced.reports.delete(d.id)));
+  const s = S.buildSeedState();
+  ops.push((b) => b.set(F.doc(db, 'system', 'control'), { ...JSON.parse(JSON.stringify(controlOf(s))), updatedAt: Date.now(), updatedBy: session.email }));
   await commitInChunks(ops);
-  COLLS.forEach((c) => synced[c].clear());
-  await seedRemote();
 }

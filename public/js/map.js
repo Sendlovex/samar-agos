@@ -1,11 +1,11 @@
 // Schematic SVG service-area map (fictionalized geography) with operational layers.
 import { ZONES, MAP, CRITICAL_FACILITIES, RESIDENT, reportTypeLabel } from './data.js';
-import { getState, RES_CAP_ML } from './store.js';
+import { getState, RES_CAP_ML, MIN_RESERVE } from './store.js';
 import { esc } from './util.js';
 import { liveMapHost } from './livemap.js';
 
 export const LAYERS = [
-  { id: 'zones', label: 'Service zones' },
+  { id: 'zones', label: 'Barangays' },
   { id: 'pipes', label: 'Main pipelines' },
   { id: 'storage', label: 'Reservoirs & tanks' },
   { id: 'sources', label: 'Water sources' },
@@ -23,7 +23,7 @@ export function assetLiveStatus(a, s = getState()) {
   const t = s.tele;
   if (a.type === 'Reservoir') {
     const lv = t.volML / RES_CAP_ML;
-    return lv < 0.3 ? 'critical' : lv < 0.42 ? 'warning' : 'normal';
+    return lv < MIN_RESERVE ? 'critical' : lv < MIN_RESERVE + 0.12 ? 'warning' : 'normal';
   }
   if (a.type === 'Tank') return t.tanks[a.id]?.status || 'normal';
   if (a.type === 'Pump') {
@@ -33,7 +33,6 @@ export function assetLiveStatus(a, s = getState()) {
   if (a.status === 'offline') return 'offline';
   if (a.status === 'critical') return 'critical';
   if (a.status === 'warning') return 'warning';
-  if (a.type === 'Pipeline' && s.zoneIssues[a.zone] && (a.id === 'PL-B2' || (a.zone === 'C' && a.id === 'PL-C2'))) return 'warning';
   return 'normal';
 }
 
@@ -73,7 +72,7 @@ export function renderMap(opts = {}) {
 
   // background
   g += `<rect width="1000" height="620" fill="#F7F9FB"/>`;
-  g += `<path d="${MAP.sea}" fill="#DCEBF6"/><text x="22" y="420" class="map-sea" transform="rotate(-90 22 420)">MAQUEDA BAY (schematic)</text>`;
+  if (MAP.sea) g += `<path d="${MAP.sea}" fill="#DCEBF6"/>`;
 
   if (layers.has('zones') || mode !== 'provider') {
     ZONES.forEach((z) => {
@@ -86,7 +85,7 @@ export function renderMap(opts = {}) {
 
   if (layers.has('pipes') && mode !== 'picker') {
     MAP.pipelines.forEach((p) => {
-      const issueZone = (p.id === 'PL-B2' || p.id === 'PL-B3') && s.zoneIssues.B ? 'warning' : p.id === 'PL-C2' && s.zoneIssues.C ? 'warning' : p.id === 'PL-D1' && s.assets.find((a) => a.id === 'PL-D1')?.status === 'warning' ? 'warning' : null;
+      const issueZone = s.assets.find((a) => a.id === p.id)?.status === 'warning' ? 'warning' : null;
       const col = issueZone ? COL.warning : p.kind === 'raw' ? '#7C93AA' : '#2C5F8F';
       g += `<polyline points="${p.pts}" fill="none" stroke="${col}" stroke-width="${p.kind === 'main' ? 3.2 : 2}" stroke-linecap="round" stroke-linejoin="round" ${p.kind === 'raw' ? 'stroke-dasharray="7 5"' : ''} ${issueZone ? 'class="pipe-alert"' : ''}/>`;
     });
@@ -111,7 +110,7 @@ export function renderMap(opts = {}) {
       .forEach((a) => {
         const sev = assetLiveStatus(a, s);
         g += `<g class="mk" transform="translate(${a.x} ${a.y})" data-action="map-select" data-kind="asset" data-id="${a.id}" tabindex="0" role="button" aria-label="${esc(a.name)} — ${sev}">${shape(a, sev, sel === a.id)}</g>`;
-        if (['RES-01', 'WTP-01', 'SRC-01'].includes(a.id)) g += `<text x="${a.x}" y="${a.y + 26}" class="map-lbl" text-anchor="middle" pointer-events="none">${esc(a.name)}</text>`;
+        if (['RES-P13', 'WTP-KUL'].includes(a.id)) g += `<text x="${a.x}" y="${a.y + 26}" class="map-lbl" text-anchor="middle" pointer-events="none">${esc(a.name)}</text>`;
       });
     if (layers.has('facilities'))
       CRITICAL_FACILITIES.forEach((f) => {
@@ -159,7 +158,7 @@ export function renderMap(opts = {}) {
     mode === 'provider' && opts.toggles !== false
       ? `<div class="map-layers" role="group" aria-label="Map layers">${icon_layers()}${LAYERS.map((l) => `<label class="chk-chip"><input type="checkbox" data-change="map-layer" value="${l.id}" ${layers.has(l.id) ? 'checked' : ''}/> ${l.label}</label>`).join('')}</div>`
       : '';
-  return `<div class="map ${opts.compact ? 'map--compact' : ''}">${toggles}<div class="map-canvas"><svg viewBox="0 0 1000 620" class="map-svg ${mode === 'picker' && !opts.readonly ? 'map-svg--pick' : ''}" ${mode === 'picker' && !opts.readonly ? 'data-action="map-pick"' : ''} role="${mode === 'picker' && !opts.readonly ? 'application' : 'img'}" aria-label="${mode === 'picker' && !opts.readonly ? 'Tap the map to set the problem location' : 'Schematic service area map'}">${g}</svg><div class="map-note">Schematic map · fictionalized service area</div></div>${legend}</div>`;
+  return `<div class="map ${opts.compact ? 'map--compact' : ''}">${toggles}<div class="map-canvas"><svg viewBox="0 0 1000 620" class="map-svg ${mode === 'picker' && !opts.readonly ? 'map-svg--pick' : ''}" ${mode === 'picker' && !opts.readonly ? 'data-action="map-pick"' : ''} role="${mode === 'picker' && !opts.readonly ? 'application' : 'img'}" aria-label="${mode === 'picker' && !opts.readonly ? 'Tap the map to set the problem location' : 'Schematic service area map'}">${g}</svg><div class="map-note">Schematic map · barangay boundaries from OpenStreetMap</div></div>${legend}</div>`;
 }
 
 function icon_layers() {

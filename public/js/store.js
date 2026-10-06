@@ -1,17 +1,19 @@
 // SAMAR-AGOS state store + simulated IoT engine + forecasting + workflow actions.
 // Everything the UI shows is derived from this single connected state.
-import { makeSeed, makeReport, ZONES, zoneById, RESIDENT, PROVIDER_USER, REPORT_STEPS, WO_STEPS, SCENARIOS, reportTypeLabel, CRITICAL_FACILITIES } from './data.js';
+import { makeSeed, makeReport, pointInZone, ZONES, zoneById, RESIDENT, PROVIDER_USER, REPORT_STEPS, WO_STEPS, SCENARIOS, reportTypeLabel, CRITICAL_FACILITIES, REAL_ASSETS, SUPPLY, BASE_DEMAND as CWD_DEMAND } from './data.js';
 import { clamp, rng, parsePoly, pointInPolygon, fmtTime, hoursLabel } from './util.js';
 
-const KEY = 'samaragos.state.v5';
+const KEY = 'samaragos.state.v6';
 export const TICK_MS = 3000;
 export const DT_MIN = 5; // simulated minutes per tick (accelerated time)
-export const RES_CAP_ML = 2.0;
-export const MIN_RESERVE = 0.3;
+// Calibrated to Catbalogan Water District (WSP 2022 / LWUA MDS 2022): one 440 m³ ground reservoir in
+// Poblacion 13 with 100 m³ held for firefighting, ~9.6 ML/day average production.
+export const RES_CAP_ML = 0.44;
+export const MIN_RESERVE = 0.1 / 0.44; // firefighting reserve
 export const OPERATING_LEVEL = 0.72;
-export const BASE_DEMAND = 2.65; // ML/day
-const SRC = { intake: 1.9, wel1: 0.5, wel2: 0.4 }; // ML/day
-const EMERGENCY_RATE = 0.8; // ML/day max transfer from backup storage
+export const BASE_DEMAND = CWD_DEMAND; // ML/day, incl. non-revenue water
+const EMERGENCY_RATE = 0.5; // ML/day max delivery by water tankers (demo scenario)
+export const TANKER_POOL_ML = 0.1; // 100 m³ of tanker deliveries (demo scenario)
 const HIST_LEN = 288; // 24 h at 5-min steps
 export const mlToLs = (ml) => (ml * 1e6) / 86400;
 
@@ -42,7 +44,7 @@ export function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && s.version === 5 && s.tele) {
+      if (s && s.version === 6 && s.tele) {
         state = s;
         return;
       }
@@ -62,11 +64,16 @@ function freshState() {
 }
 
 export async function reset(notify = true) {
+  const prev = state;
   state = freshState();
+  if (remote && prev) {
+    // Shared records stay (they are real data); only the simulation and demo scenario reset.
+    SHARED.forEach((c) => (state[c] = prev[c].filter((x) => !x.simulated)));
+    state.publicStats = prev.publicStats;
+  }
   warmup();
   if (remote) {
-    clearShared();
-    if (notify) toast('Resetting shared demo data…', 'info');
+    if (notify) toast('Resetting demo scenarios…', 'info');
     await remote.reset();
   }
   clearTimeout(saveTimer);
@@ -77,7 +84,7 @@ export async function reset(notify = true) {
   }
   if (notify) {
     emit('change');
-    toast('Demo data reset to the starting scenario', 'info');
+    toast(remote ? 'Demo scenarios reset to normal operations' : 'Demo data reset', 'info');
   }
 }
 
@@ -122,15 +129,9 @@ export function clearShared() {
   state.publicStats = null;
 }
 
-// Seed data shaped for Firestore: simulated reports belong to placeholder residents.
+// Initial database content: the real CWD asset registry only (no sample records).
 export function buildSeedState() {
-  const s = freshState();
-  s.reports.forEach((r) => {
-    r.reporterUid = r.mine ? 'seed-resident' : 'seed-sim';
-    delete r.mine;
-  });
-  s.notifications.forEach((n) => ((n.uid = n.audience === 'resident' ? 'seed-resident' : null), (n.zone = null)));
-  return s;
+  return freshState();
 }
 
 export function applyRemote(coll, docs, part) {
@@ -143,6 +144,8 @@ export function applyRemote(coll, docs, part) {
       .map((n) => (part === 'broadcast' && ns[n.id] ? { ...n, state: ns[n.id] } : n));
     const local = state.notifications.filter((n) => n.local);
     state.notifications = [...Object.values(notifParts).flat(), ...local].sort(SORT.notifications);
+  } else if (coll === 'assets' && !docs.length) {
+    state.assets = REAL_ASSETS.map((a) => ({ ...a })); // registry not in the database yet
   } else {
     state[coll] = docs.sort(SORT[coll]);
   }
@@ -159,7 +162,7 @@ export function applyControl(d) {
   s.zoneIssues = d.zoneIssues || {};
   s.pumpsOffline = d.pumpsOffline || [];
   s.scenarioLog = d.scenarioLog || [];
-  if (d.emergencyActive && !s.emergency.active) s.emergency = { active: true, poolML: 0.4 };
+  if (d.emergencyActive && !s.emergency.active) s.emergency = { active: true, poolML: TANKER_POOL_ML };
   if (!d.emergencyActive) s.emergency = { active: false, poolML: 0 };
   if (d.volOverride && d.volOverride.at > (s.volOverride?.at || 0)) s.tele.volML = d.volOverride.volML;
   s.volOverride = d.volOverride || null;
@@ -199,10 +202,13 @@ export function leakLoss(s = state) {
   return Object.values(s.zoneIssues).reduce((a, z) => a + (z.lossML || 0), 0);
 }
 
+// Supply = Caramayon springs (pumped) + Masacpasac spring + Kulador plant (Antiao River) + deep wells.
+// inflowMult models source yield/raw-water conditions (e.g. a turbid Antiao River stops Kulador).
 export function productionCapacity(s = state, o = {}) {
-  const pumpDown = !o.restorePumps && s.pumpsOffline.includes('PS-01');
+  const caramayonDown = !o.restorePumps && s.pumpsOffline.some((id) => id.startsWith('PS-CAR'));
   const inflow = s.factors.inflowMult * (1 + (o.inflowPct || 0) / 100);
-  return SRC.intake * inflow * (pumpDown ? 0.45 : 1) + SRC.wel1 + SRC.wel2 + (o.backup ? 0.5 : 0) + (o.prodDelta || 0);
+  const kulador = s.factors.kuladorOff ? 0 : SUPPLY.kulador * inflow;
+  return (caramayonDown ? 0 : SUPPLY.caramayon) + SUPPLY.masacpasac * inflow + kulador + SUPPLY.wells + (o.backup ? 0.56 : 0) + (o.prodDelta || 0);
 }
 
 function demandAt(s, simTime, o = {}) {
@@ -259,7 +265,6 @@ function warmup() {
     tanks: {},
     zones: {},
     pumps: {},
-    turbidityE: 4.6,
   };
   updateDerived(state.tele, now);
 }
@@ -268,8 +273,7 @@ function zonePressure(z, t, level) {
   const issue = state.zoneIssues[z.id];
   const peak = (diurnal(t) - 1) * 9;
   const low = level < MIN_RESERVE ? (MIN_RESERVE - level) * 70 : 0;
-  const booster = z.id === 'B' && state.pumpsOffline.includes('PS-03') ? 8 : 0;
-  return Math.max(0, z.basePressure - peak - low - booster - (issue?.pressureDrop || 0) + (rand() - 0.5) * 1.6);
+  return Math.max(0, z.basePressure - peak - low - (issue?.pressureDrop || 0) + (rand() - 0.5) * 1.6);
 }
 
 function zoneFlow(z, t) {
@@ -285,20 +289,22 @@ function updateDerived(tele, simTime) {
     const normalFlow = z.baseFlow * diurnal(simTime) * state.factors.demandMult;
     tele.zones[z.id] = { pressure: p, flow: f, flowDeltaPct: ((f - normalFlow) / normalFlow) * 100, status: p < 15 ? 'critical' : p < 26 ? 'warning' : 'normal' };
   });
-  const tankDefs = { 'TNK-01': ['B', 250000], 'TNK-02': ['D', 180000], 'TNK-03': ['E', 300000] };
-  Object.entries(tankDefs).forEach(([id, [zone, cap]]) => {
-    const prev = tele.tanks[id]?.level ?? 0.7;
-    const issue = state.zoneIssues[zone];
-    const target = clamp(0.3 + 0.55 * level - (diurnal(simTime) - 1) * 0.5 - (issue ? 0.22 : 0), 0.05, 0.98);
+  // CWD has no elevated tanks on record; tank telemetry exists only for tanks registered as assets.
+  (state.assets || []).filter((a) => a.type === 'Tank' && a.capacityL).forEach((a) => {
+    const prev = tele.tanks[a.id]?.level ?? 0.7;
+    const target = clamp(0.3 + 0.55 * level - (diurnal(simTime) - 1) * 0.5 - (state.zoneIssues[a.zone] ? 0.22 : 0), 0.05, 0.98);
     const lv = prev + (target - prev) * 0.15 + (rand() - 0.5) * 0.004;
-    tele.tanks[id] = { level: lv, volL: lv * cap, capL: cap, status: lv < 0.25 ? 'critical' : lv < 0.4 ? 'warning' : 'normal' };
+    tele.tanks[a.id] = { level: lv, volL: lv * a.capacityL, capL: a.capacityL, status: lv < 0.25 ? 'critical' : lv < 0.4 ? 'warning' : 'normal' };
   });
-  const ps01Down = state.pumpsOffline.includes('PS-01');
-  tele.pumps = {
-    'PS-01': { status: ps01Down ? 'offline' : 'running', units: ps01Down ? '1 of 2 running (Unit 1 tripped)' : '2 of 2 running', flowLs: mlToLs(Math.min(tele.production, productionCapacity()) - 0.9 + 0), vibration: 6.8 + rand() * 0.5, powerKw: ps01Down ? 27 + rand() * 2 : 54 + rand() * 3 },
-    'PS-02': { status: 'running', units: '1 duty, 1 standby', flowLs: mlToLs(tele.demand - leakLoss()), vibration: 2.1 + rand() * 0.4, powerKw: 39 + rand() * 3 },
-    'PS-03': { status: state.pumpsOffline.includes('PS-03') ? 'offline' : 'running', units: '1 of 1 running', flowLs: tele.zones.B.flow, vibration: 2.6 + rand() * 0.4, powerKw: 12 + rand() * 1.5 },
-  };
+  // Pump telemetry for every registered pump (simulated). Ratings from the asset registry.
+  const HP = { 'PS-CAR1': 200, 'PS-CAR2': 125, 'BP-CAN': 25, 'BP-MAB': 40, 'BP-ANT': 20, 'BP-VG': 5, 'BP-COG': 5 };
+  tele.pumps = {};
+  (state.assets || []).filter((a) => a.type === 'Pump').forEach((a) => {
+    const down = state.pumpsOffline.includes(a.id) || a.status === 'offline';
+    const kw = (HP[a.id] || 10) * 0.746;
+    const flowLs = a.id === 'PS-CAR1' ? (down ? 0 : 91 * (0.92 + rand() * 0.06)) : a.id === 'BP-COG' ? (down ? 0 : 5 * (0.9 + rand() * 0.1)) : null;
+    tele.pumps[a.id] = { status: down ? 'offline' : 'running', units: down ? 'Stopped' : 'Running', flowLs, vibration: down ? 0 : 2 + rand() * 0.8, powerKw: down ? 0 : kw * (0.75 + rand() * 0.1) };
+  });
   const tankVol = Object.values(tele.tanks).reduce((a, t) => a + t.volL / 1e6, 0);
   tele.reserveHours = (tele.volML + tankVol + (state.emergency.active ? state.emergency.poolML : 0)) / (tele.demand / 24);
 }
@@ -317,10 +323,12 @@ export const WQ_LAB = [
   { key: 'ecoli', label: 'E. coli', unit: 'MPN/100 mL', max: 1.1, std: '< 1.1 MPN/100 mL' },
   { key: 'coliform', label: 'Total coliform', unit: 'MPN/100 mL', max: 1.1, std: '< 1.1 MPN/100 mL' },
 ];
+// Sampling points follow CWD's Water Safety Plan 2022: treated water at Kulador, storage at the
+// Poblacion 13 reservoir, and random household taps in the distribution network.
 export const WQ_STATIONS = [
-  { id: 'WQ-1', name: 'Treatment plant outlet', where: 'Antiao Treatment Plant · after chlorination' },
-  { id: 'WQ-2', name: 'Central Reservoir outlet', where: 'Central Reservoir · leaving storage' },
-  { id: 'WQ-3', name: 'Distribution entry', where: 'Main line · before zone valves' },
+  { id: 'WQ-1', name: 'Kulador plant outlet', where: 'Kulador Treatment Plant · after chlorination' },
+  { id: 'WQ-2', name: 'Poblacion 13 reservoir', where: 'Ground reservoir outlet · 440 m³' },
+  { id: 'WQ-3', name: 'Household taps', where: 'Distribution network · random daily sampling' },
 ];
 // Typical values per point (chlorine decays and water warms slightly downstream).
 const WQ_TARGET = {
@@ -378,7 +386,7 @@ export function setWaterQuality(mode, { at = Date.now(), silent = false } = {}) 
   });
   w.lab = { ...WQ_LAB_RESULT[w.mode], at };
   if (silent) return emitSoon();
-  commit(w.mode === 'safe' ? 'Water quality set to SAFE (demo)' : 'Water quality set to NOT SAFE (demo)', w.mode === 'safe' ? 'success' : 'error');
+  commit(); // no toast: the page itself shows the change
 }
 
 const wqCheck = (p, v) => (v == null ? 'offline' : (p.min != null && v < p.min) || (p.max != null && v > p.max) ? (p.operational ? 'warning' : 'critical') : 'normal');
@@ -419,9 +427,6 @@ export function tick() {
   t.production = r.production;
   t.demand = r.demand;
   t.transfer = r.transfer;
-  const inc39 = s.incidents.find((i) => i.id === 'INC-2026-039');
-  const targetTurb = inc39 && inc39.status !== 'Resolved' ? 4.5 : 1.1;
-  t.turbidityE = t.turbidityE + (targetTurb - t.turbidityE) * 0.08 + (rand() - 0.5) * 0.15;
   updateDerived(t, simTime);
 
   // history
@@ -435,29 +440,6 @@ export function tick() {
   push(h.outflow, mlToLs(t.demand));
   ZONES.forEach((z) => (push(h.pressure[z.id], t.zones[z.id].pressure), push(h.flow[z.id], t.zones[z.id].flow)));
 
-  // smart emergency tank (simulated IoT)
-  s.emergencyTanks.forEach((et) => {
-    if (et.mode !== 'SIMULATED') return;
-    const draw = s.zoneIssues[et.zone] ? 18 + rand() * 14 : 2 + rand() * 3;
-    et.volumeL = clamp(et.volumeL - draw, 0, et.capacityL);
-    if (et.volumeL < et.capacityL * 0.2) {
-      et.volumeL = et.capacityL * 0.95;
-      et.lastRefill = Date.now();
-    }
-    et.sensor = rand() < 0.02 ? 'intermittent' : 'online';
-    et.updatedAt = Date.now();
-  });
-
-  // resident reports keep arriving while an unresolved zone issue persists
-  // (local demo only — with a shared backend, scenarios add a one-off batch instead)
-  Object.entries(s.zoneIssues).forEach(([zone, issue]) => {
-    if (!issue.spawn || remote) return;
-    const count = s.reports.filter((rp) => rp.zone === zone && rp.submittedAt >= issue.since).length;
-    const informed = s.advisories.some((a) => a.status === 'Active' && a.areas.includes(zone));
-    const chance = informed ? 0.03 : 0.1;
-    if (count < 34 && rand() < chance) spawnReport(zone, issue.type);
-  });
-
   wqInit(s);
   wqStep(s, simTime);
   logForecast(s);
@@ -466,20 +448,15 @@ export function tick() {
   emit('tick');
 }
 
-function spawnReport(zone, issueType, id = `WR-2026-${state.reportSeq++}`) {
-  const z = zoneById(zone);
-  const p = parsePoly(z.poly);
-  const xs = p.map((q) => q[0]);
-  const ys = p.map((q) => q[1]);
-  let x, y, guard = 0;
-  do {
-    x = Math.round(Math.min(...xs) + rand() * (Math.max(...xs) - Math.min(...xs)));
-    y = Math.round(Math.min(...ys) + rand() * (Math.max(...ys) - Math.min(...ys)));
-  } while (!pointInPolygon([x, y], p) && guard++ < 200);
+// Demo mode only: a scenario can add simulated resident reports, clearly marked as simulated.
+const YEAR = () => new Date().getFullYear();
+function spawnReport(zone, issueType, id = `WR-${YEAR()}-${String(state.reportSeq++).padStart(4, '0')}`) {
+  const [x, y] = pointInZone(rand, zone);
   const pool = issueType === 'leak' ? ['leak', 'low_pressure', 'low_pressure', 'no_water', 'leak'] : ['low_pressure', 'low_pressure', 'low_pressure', 'no_water', 'leak'];
   const type = pool[Math.floor(rand() * pool.length)];
-  const rep = makeReport(rand, { id, zone, type, x, y, at: Date.now() });
-  if (remote) rep.reporterUid = 'seed-sim';
+  const rep = makeReport(rand, { id, zone, type, x, y, at: Date.now(), desc: 'Simulated report (demo scenario).' });
+  rep.simulated = true;
+  if (remote) rep.reporterUid = 'demo-sim';
   state.reports.push(rep);
 }
 
@@ -614,17 +591,18 @@ export function forecastReasons(s = state) {
   if (demandAbove > 3) out.push(`Demand is ${Math.round(demandAbove)}% above normal for this period`);
   const loss = leakLoss(s);
   if (loss > 0) {
-    const zones = Object.keys(s.zoneIssues).map((z) => `Zone ${z}`).join(', ');
+    const zones = Object.keys(s.zoneIssues).map((z) => zoneById(z)?.short || z).join(', ');
     out.push(`Estimated distribution losses of ${loss.toFixed(2)} ML/day (${zones} line problem)`);
   }
-  if (s.factors.inflowMult < 0.98) out.push(`Raw-water inflow from the river intake decreased by ${Math.round((1 - s.factors.inflowMult) * 100)}%`);
-  if (s.pumpsOffline.includes('PS-01')) out.push('Raw Water Pump Station PS-01 is offline — production capacity reduced ~29%');
+  if (s.factors.kuladorOff) out.push('Kulador treatment plant stopped: the Antiao River is too turbid to treat');
+  if (s.factors.inflowMult < 0.98) out.push(`Spring and river yield decreased by ${Math.round((1 - s.factors.inflowMult) * 100)}%`);
+  if (s.pumpsOffline.some((id) => id.startsWith('PS-CAR'))) out.push('Caramayon pumping stations are offline — about 91 L/s of supply lost');
   const fc = forecast({ hours: 24 }, s);
   if (fc.avgProd < fc.avgDemand - 0.05) out.push(`Estimated demand (${fc.avgDemand.toFixed(2)} ML/day) exceeds available supply (${fc.avgProd.toFixed(2)} ML/day) over the next 24 hours`);
   const lvl = s.tele.volML / RES_CAP_ML;
-  if (lvl < 0.62) out.push(`Storage is lower than normal for this period (${Math.round(lvl * 100)}% vs. typical 70%)`);
-  if (s.emergency.active && s.emergency.poolML > 0) out.push(`Backup storage is supplementing supply (${Math.round(s.emergency.poolML * 1e6).toLocaleString()} L remaining)`);
-  if (!out.length) out.push('Production capacity currently meets estimated demand', 'Central Reservoir is within its normal operating range');
+  if (lvl < 0.62) out.push(`Reservoir storage is lower than normal (${Math.round(lvl * 100)}% of 440 m³)`);
+  if (s.emergency.active && s.emergency.poolML > 0) out.push(`Water tankers are supplementing supply (${Math.round(s.emergency.poolML * 1e6).toLocaleString()} L remaining)`);
+  if (!out.length) out.push('Production capacity currently meets estimated demand', 'Poblacion 13 reservoir is within its normal operating range');
   return out;
 }
 
@@ -646,8 +624,8 @@ export function deriveAlerts(s = state) {
   const a = [];
   const t = s.tele;
   const lvl = t.volML / RES_CAP_ML;
-  if (lvl < MIN_RESERVE) a.push({ key: 'storage', sev: 'critical', cat: 'Storage', title: 'Storage below minimum reserve', detail: `Central Reservoir at ${Math.round(lvl * 100)}% (minimum reserve 30%)`, link: '#/p/operations' });
-  else if (lvl < 0.42) a.push({ key: 'storage', sev: 'warning', cat: 'Storage', title: 'Low storage warning', detail: `Central Reservoir at ${Math.round(lvl * 100)}%`, link: '#/p/operations' });
+  if (lvl < MIN_RESERVE) a.push({ key: 'storage', sev: 'critical', cat: 'Storage', title: 'Storage below minimum reserve', detail: `Poblacion 13 reservoiir at ${Math.round(lvl * 100)}% (minimum reserve 30%)`, link: '#/p/operations' });
+  else if (lvl < 0.42) a.push({ key: 'storage', sev: 'warning', cat: 'Storage', title: 'Low storage warning', detail: `Poblacion 13 reservoir at ${Math.round(lvl * 100)}%`, link: '#/p/operations' });
   const fc = forecast({ hours: 48 }, s);
   if (fc.status === 'risk' || fc.status === 'critical')
     a.push({ key: 'forecast', sev: fc.status === 'critical' ? 'critical' : 'warning', cat: 'Forecast', title: 'Shortage forecast', detail: `Minimum reserve may be reached in ~${hoursLabel(fc.crossH)}`, link: '#/p/forecast' });
@@ -658,11 +636,10 @@ export function deriveAlerts(s = state) {
   s.pumpsOffline.forEach((id) => a.push({ key: `pump-${id}`, sev: 'critical', cat: 'Equipment', title: `Pump failure — ${id}`, detail: `${s.assets.find((x) => x.id === id)?.name} offline`, link: `#/p/assets/${id}` }));
   reportClusters(s)
     .filter((c) => c.reports.length >= 3)
-    .forEach((c) => a.push({ key: `cluster-${c.zone}`, sev: 'warning', cat: 'Reports', title: `New report cluster — Zone ${c.zone}`, detail: `${c.reports.length} unreviewed resident reports`, link: '#/p/incidents' }));
+    .forEach((c) => a.push({ key: `cluster-${c.zone}`, sev: 'warning', cat: 'Reports', title: `New report cluster — ${zoneById(c.zone)?.short || c.zone}`, detail: `${c.reports.length} unreviewed resident reports`, link: '#/p/incidents' }));
   s.assets.filter((x) => x.status === 'offline').forEach((x) => a.push({ key: `offline-${x.id}`, sev: 'offline', cat: 'Equipment', title: `${x.type} offline — ${x.id}`, detail: `${x.name} is not reporting`, link: `#/p/assets/${x.id}` }));
-  if (t.turbidityE > 4) a.push({ key: 'turbidity-E', sev: 'info', cat: 'Water Quality', title: 'Turbidity elevated — Zone E', detail: `${t.turbidityE.toFixed(1)} NTU at TS-E1 (guideline 5 NTU)`, link: '#/p/incidents/INC-2026-039' });
   const ws = waterSafety(s);
-  if (ws.verdict === 'unsafe') a.push({ key: 'potability', sev: 'critical', cat: 'Water Quality', title: 'Water not safe to drink', detail: `${ws.failures.length} reading${ws.failures.length > 1 ? 's' : ''} outside drinking-water limits`, link: '#/p/water-safety' });
+  if (ws.verdict === 'unsafe') a.push({ key: 'potability', sev: 'critical', cat: 'Water Quality', title: 'Water not safe to use', detail: `${ws.failures.length} reading${ws.failures.length > 1 ? 's' : ''} outside drinking-water limits`, link: '#/p/water-safety' });
   else if (ws.verdict === 'caution') a.push({ key: 'potability', sev: 'warning', cat: 'Water Quality', title: 'Water quality needs attention', detail: ws.failures.map((f) => f.label).join(', '), link: '#/p/water-safety' });
   s.workOrders.filter((w) => w.status !== 'Completed' && w.target < Date.now()).forEach((w) => a.push({ key: `overdue-${w.id}`, sev: 'warning', cat: 'Work Orders', title: `Overdue work order — ${w.id}`, detail: w.description, link: `#/p/work-orders/${w.id}` }));
   return a.sort((x, y) => SEV_RANK[y.sev] - SEV_RANK[x.sev]);
@@ -672,7 +649,6 @@ function syncAlertNotifications() {
   const alerts = deriveAlerts();
   const keys = new Set(alerts.map((x) => x.key));
   alerts.forEach((al) => {
-    if (al.key.startsWith('overdue') || al.key.startsWith('offline') || al.key === 'turbidity-E') return; // seeded already
     const prev = state.seenAlerts[al.key];
     if (!prev || (al.sev === 'critical' && prev !== 'critical')) {
       // derived from this device's telemetry, so kept local (never written to the shared database)
@@ -690,13 +666,13 @@ export function subsystemStatus(s = state) {
   const cap = productionCapacity(s);
   const zoneSev = worstSev(ZONES.map((z) => t.zones[z.id].status));
   const affected = ZONES.filter((z) => t.zones[z.id].status !== 'normal');
-  const supplySev = cap < 2.2 ? 'critical' : cap < 2.65 ? 'warning' : 'normal';
+  const supplySev = cap < BASE_DEMAND * 0.9 ? 'critical' : cap < BASE_DEMAND * 1.15 ? 'warning' : 'normal';
   const equipSev = s.pumpsOffline.length ? 'critical' : s.assets.some((a) => a.status === 'offline') ? 'offline' : 'normal';
   return [
     { key: 'supply', label: 'Supply', sev: supplySev, text: supplySev === 'normal' ? `Capacity ${cap.toFixed(2)} ML/day` : `Capacity reduced to ${cap.toFixed(2)} ML/day` },
     { key: 'storage', label: 'Storage', sev: lvl < MIN_RESERVE ? 'critical' : lvl < 0.42 ? 'warning' : 'normal', text: `Reservoir ${Math.round(lvl * 100)}%` },
-    { key: 'distribution', label: 'Distribution', sev: zoneSev, text: affected.length ? `${affected.length} zone${affected.length > 1 ? 's' : ''} below normal pressure` : 'All zones within range' },
-    { key: 'equipment', label: 'Equipment', sev: equipSev, text: s.pumpsOffline.length ? `${s.pumpsOffline.join(', ')} offline` : equipSev === 'offline' ? '1 sensor not reporting' : 'All pumps running' },
+    { key: 'distribution', label: 'Distribution', sev: zoneSev, text: affected.length ? `${affected.length} barangay${affected.length > 1 ? 's' : ''} below normal pressure` : 'All barangays within range' },
+    { key: 'equipment', label: 'Equipment', sev: equipSev, text: s.pumpsOffline.length ? `${s.pumpsOffline.join(', ')} offline` : equipSev === 'offline' ? `${s.assets.filter((a) => a.status === 'offline').length} asset(s) not reporting` : 'All pumps running' },
     { key: 'forecast', label: 'Forecast', sev: FORECAST_STATUS[fc.status].sev, text: FORECAST_STATUS[fc.status].label },
   ];
 }
@@ -706,8 +682,8 @@ export function overallStatus(s = state) {
   const order = ['critical', 'warning', 'info', 'offline', 'normal'];
   const sev = order.find((o) => subs.some((x) => x.sev === o)) || 'normal';
   const affected = ZONES.filter((z) => s.tele.zones[z.id].status !== 'normal');
-  let summary = 'All service zones are operating within normal ranges.';
-  if (affected.length) summary = `${affected.length} service zone${affected.length > 1 ? 's are' : ' is'} currently experiencing reduced pressure.`;
+  let summary = 'All served barangays are operating within normal ranges.';
+  if (affected.length) summary = `${affected.length} barangay${affected.length > 1 ? 's are' : ' is'} currently experiencing reduced pressure.`;
   const fc = subs.find((x) => x.key === 'forecast');
   if (fc.sev === 'warning' || fc.sev === 'critical') summary += ' Storage is forecast to approach the minimum reserve.';
   if (s.pumpsOffline.length) summary += ` ${s.pumpsOffline.join(', ')} is offline.`;
@@ -771,7 +747,7 @@ function advanceReports(ids, status, text) {
     if (!r || stepIdx(r.status) >= stepIdx(status)) return;
     r.status = status;
     r.updates.push({ at: Date.now(), status, text });
-    const realResident = r.reporterUid && !r.reporterUid.startsWith('seed');
+    const realResident = r.reporterUid && !r.reporterUid.startsWith('demo');
     if (r.mine || realResident) {
       const label = REPORT_STEPS[stepIdx(status)].label;
       notify('resident', { kind: 'report', title: `${label} — ${r.id}`, body: text, link: `#/r/reports/${r.id}`, uid: r.reporterUid || null });
@@ -785,7 +761,7 @@ async function nextId(kind, local) {
 }
 
 export async function submitReport(data) {
-  const id = await nextId('report', () => `WR-2026-${state.reportSeq++}`);
+  const id = await nextId('report', () => `WR-${YEAR()}-${String(state.reportSeq++).padStart(4, '0')}`);
   const me = session();
   const r = {
     id,
@@ -855,7 +831,7 @@ function applyResponseToIncident(r, inc) {
 const operatorName = () => (session() ? PROVIDER_USER.name : 'Operator');
 
 export async function createIncident({ zone, reportIds, title, type, severity, note, evidence }) {
-  const id = await nextId('incident', () => `INC-2026-${String(state.incidentSeq++).padStart(3, '0')}`);
+  const id = await nextId('incident', () => `INC-${YEAR()}-${String(state.incidentSeq++).padStart(3, '0')}`);
   const z = zoneById(zone);
   const zt = state.tele.zones[zone];
   const reps = state.reports.filter((r) => reportIds.includes(r.id));
@@ -953,7 +929,7 @@ export function resolveIncident(id, notes) {
 
 // ---------------------------------------------------------------- work orders
 export async function createWorkOrder(data) {
-  const id = await nextId('wo', () => `WO-2026-${String(state.woSeq++).padStart(4, '0')}`);
+  const id = await nextId('wo', () => `WO-${YEAR()}-${String(state.woSeq++).padStart(4, '0')}`);
   const now = Date.now();
   const wo = { id, photos: { before: null, after: null }, notes: [], completion: null, createdAt: now, status: data.team ? 'Assigned' : 'New', history: [{ status: 'New', at: now }], ...data };
   if (data.team) wo.history.push({ status: 'Assigned', at: now });
@@ -1015,14 +991,14 @@ export function setWorkOrderPhoto(id, which, dataUrl) {
 
 // ---------------------------------------------------------------- advisories
 export async function publishAdvisory(data) {
-  const id = await nextId('adv', () => `ADV-2026-${String(state.advSeq++).padStart(3, '0')}`);
+  const id = await nextId('adv', () => `ADV-${YEAR()}-${String(state.advSeq++).padStart(3, '0')}`);
   const now = Date.now();
   const adv = { id, status: 'Active', updatedAt: now, ...data };
   state.advisories.unshift(adv);
   const inc = state.incidents.find((i) => i.id === data.incidentId);
   if (inc) {
     inc.advisoryIds.push(id);
-    inc.timeline.push({ at: now, text: `Advisory ${id} published to ${data.areas.map((z) => `Zone ${z}`).join(', ')}` });
+    inc.timeline.push({ at: now, text: `Advisory ${id} published to ${data.areas.map((z) => zoneById(z)?.short || z).join(', ')}` });
   }
   notifyZones(data.areas, { kind: 'advisory', title: `New water advisory: ${data.title}`, body: data.message, link: '#/r/advisories' });
   commit(`Advisory ${id} published to residents`);
@@ -1043,6 +1019,24 @@ export function confirmAltWater(id, patch) {
   commit('Distribution point confirmed');
 }
 
+// Staff-entered records (no seeded sample data). IDs are random so devices never collide.
+const rid = (prefix) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.floor(rand() * 1296).toString(36).toUpperCase().padStart(2, '0')}`;
+export function addEmergencyTank(data) {
+  state.emergencyTanks.push({ id: rid('ET'), mode: 'MANUAL', updatedAt: Date.now(), ...data });
+  commit('Emergency storage added');
+}
+export function addAltWater(data) {
+  const p = { id: rid('AW'), active: true, confirmedAt: Date.now(), ...data };
+  state.altWater.push(p);
+  if (p.status === 'AVAILABLE') notifyZones([p.zone], { kind: 'water', title: 'Emergency water available', body: `${p.name} — ${p.hours}`, link: '#/r/water-access' });
+  commit('Water distribution point added');
+}
+export function removeAltWater(id) {
+  state.altWater = state.altWater.filter((x) => x.id !== id);
+  remote?.remove?.('altWater', id);
+  commit('Water distribution point removed');
+}
+
 export function updateEmergencyTank(id, patch) {
   const t = state.emergencyTanks.find((x) => x.id === id);
   Object.assign(t, patch, { updatedAt: Date.now() });
@@ -1061,29 +1055,27 @@ export async function applyScenario(key) {
     s.pumpsOffline = [];
     s.emergency = { active: false, poolML: 0 };
     s.activeScenarios = [];
-    s.assets.forEach((a) => a.id.startsWith('PS') && (a.status = 'normal'));
+    s.assets.forEach((a) => a.type === 'Pump' && a.status === 'critical' && (a.status = 'normal'));
     if (s.tele.volML / RES_CAP_ML < 0.6) setVolume(0.66 * RES_CAP_ML);
   } else {
     if (!s.activeScenarios.includes(key)) s.activeScenarios.push(key);
     if (key === 'highDemand') s.factors.demandMult = 1.22;
     if (key === 'lowReservoir') setVolume(0.335 * RES_CAP_ML), (s.factors.demandMult = Math.max(s.factors.demandMult, 1.06));
     if (key === 'pumpFailure') {
-      if (!s.pumpsOffline.includes('PS-01')) s.pumpsOffline.push('PS-01');
-      const a = s.assets.find((x) => x.id === 'PS-01');
-      a.status = 'critical';
-      a.failures.unshift({ at: now, text: 'Unit 1 tripped on motor overload (simulated scenario)' });
+      ['PS-CAR1', 'PS-CAR2'].forEach((id) => {
+        if (!s.pumpsOffline.includes(id)) s.pumpsOffline.push(id);
+        const a = s.assets.find((x) => x.id === id);
+        if (a) a.status = 'critical';
+      });
     }
-    if (key === 'pipelineLeak') s.zoneIssues.C = { type: 'leak', label: 'Suspected main break — Zone C', pressureDrop: 14, flowChange: 18, lossML: 0.6, since: now, spawn: true };
-    if (key === 'lowPressure') s.zoneIssues.B = { type: 'line', label: 'Distribution-line problem — Zone B', pressureDrop: 17, flowChange: -21, lossML: 0.5, since: now, spawn: true };
-    if (key === 'sourceDisruption') s.factors.inflowMult = 0.62;
-    if (key === 'emergencySupply') {
-      s.emergency = { active: true, poolML: 0.4 };
-      notifyZones(remote ? ZONES.map((z) => z.id) : [], { kind: 'water', title: 'Emergency water supply activated', body: 'Backup storage is now supplementing the system. Distribution points are listed in Alternative Water Access.', link: '#/r/water-access' });
-    }
-    // On the shared backend, a pressure problem brings one batch of simulated resident reports.
-    const issueZone = key === 'pipelineLeak' ? 'C' : key === 'lowPressure' ? 'B' : null;
-    if (remote && issueZone) {
-      const ids = await remote.allocIds('report', 8);
+    if (key === 'pipelineLeak') s.zoneIssues.canlapwas = { type: 'leak', label: 'Suspected main break — Canlapwas', pressureDrop: 14, flowChange: 18, lossML: 0.6, since: now, spawn: true };
+    if (key === 'lowPressure') s.zoneIssues.maulong = { type: 'line', label: 'Low pressure — Maulong', pressureDrop: 12, flowChange: -21, lossML: 0.3, since: now, spawn: true };
+    if (key === 'sourceDisruption') (s.factors.inflowMult = 0.7), (s.factors.kuladorOff = true);
+    if (key === 'emergencySupply') s.emergency = { active: true, poolML: TANKER_POOL_ML };
+    // A pressure problem brings one batch of simulated resident reports (demo mode).
+    const issueZone = key === 'pipelineLeak' ? 'canlapwas' : key === 'lowPressure' ? 'maulong' : null;
+    if (issueZone) {
+      const ids = remote ? await remote.allocIds('report', 8) : Array.from({ length: 8 }, () => undefined);
       ids.forEach((id) => spawnReport(issueZone, s.zoneIssues[issueZone].type, id));
     }
   }

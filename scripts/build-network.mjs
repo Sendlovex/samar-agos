@@ -12,28 +12,19 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 
 const OUT = process.argv[2] || 'public/data/network.json';
 const CACHE = process.argv[3] || 'scripts/.osm-roads-cache.json';
-const BBOX = [11.749, 124.856, 11.812, 124.916];
+const BBOX = [11.735, 124.845, 11.818, 124.916];
 const ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 
-// Keep in sync with ZONE_LL / asset positions in public/js/data.js
-const ZONES = {
-  A: [[11.7835, 124.8815], [11.7825, 124.8875], [11.776, 124.889], [11.7735, 124.885], [11.776, 124.881], [11.7795, 124.879], [11.7815, 124.879]],
-  B: [[11.812, 124.858], [11.81, 124.866], [11.798, 124.874], [11.789, 124.881], [11.7835, 124.8815], [11.7815, 124.879], [11.7845, 124.8725], [11.7925, 124.8635], [11.804, 124.8575]],
-  C: [[11.789, 124.881], [11.798, 124.874], [11.8, 124.89], [11.797, 124.906], [11.786, 124.908], [11.779, 124.899], [11.776, 124.889], [11.7825, 124.8875], [11.7835, 124.8815]],
-  D: [[11.779, 124.899], [11.786, 124.908], [11.777, 124.916], [11.762, 124.914], [11.755, 124.906], [11.7615, 124.8915], [11.769, 124.8895], [11.776, 124.889]],
-  E: [[11.776, 124.881], [11.7735, 124.885], [11.776, 124.889], [11.769, 124.8895], [11.7615, 124.8915], [11.75, 124.896], [11.7495, 124.8855], [11.758, 124.882], [11.77, 124.8835]],
-};
-const RESERVOIR = [11.785, 124.8935];
+// Service areas = the 26 barangays served by Catbalogan Water District (boundaries from OpenStreetMap).
+import { SERVED_BARANGAYS } from '../public/js/barangays.js';
+const ZONES = Object.fromEntries(SERVED_BARANGAYS.filter((b) => b.ring).map((b) => [b.id, b.ring]));
+// Poblacion 13 ground reservoir (CWD Water Safety Plan 2022) and facilities the mains must reach.
+const RESERVOIR = [11.7783, 124.8868];
 const TARGETS = [
-  [11.7905, 124.87], // TNK-01 Mercedes Elevated Tank
-  [11.764, 124.9075], // TNK-02 Uplands Ground Tank
-  [11.765, 124.887], // TNK-03 South Coastal Elevated Tank
-  [11.7775, 124.8845], // WEL-01
-  [11.795, 124.887], // WEL-02
-  [11.788, 124.8735], // PS-03 Mercedes Booster
-  [11.803, 124.8635], // Payao (north end of Zone B)
-  [11.7541, 124.8886], // Bunuanan (south end of Zone E)
-  [11.7598, 124.9053], // Lagundi
+  [11.80056, 124.89828], // Kulador intake and treatment plant
+  [11.76483, 124.88839], // Executive Heights pumping station
+  [11.76214, 124.91089], // Lagundi pumping station
+  [11.80225, 124.86728], // Payao pumping station
 ];
 
 // ---------------------------------------------------------------- fetch (cached)
@@ -203,7 +194,7 @@ function nearestZone(p) {
   return Object.keys(ZONES).reduce((best, z) => {
     const d = Math.min(...ZONES[z].map((a, i) => segDist(p, a, ZONES[z][(i + 1) % ZONES[z].length])));
     return d < best[1] ? [z, d] : best;
-  }, ['A', Infinity])[0];
+  }, [Object.keys(ZONES)[0], Infinity])[0];
 }
 const used = new Set();
 const byNode = new Map();
@@ -233,5 +224,5 @@ for (const e of kept) {
 
 const km = (kind) => (kept.filter((e) => (kind === 'm') === e.main).reduce((s, e) => s + e.len, 0) / 1000).toFixed(1);
 mkdirSync(OUT.replace(/[\\/][^\\/]+$/, ''), { recursive: true });
-writeFileSync(OUT, JSON.stringify({ source: 'Road geometry © OpenStreetMap contributors (ODbL). Pipe routing is illustrative.', generated: new Date().toISOString().slice(0, 10), lines }));
+writeFileSync(OUT, JSON.stringify({ source: 'Road geometry © OpenStreetMap contributors (ODbL). Pipe routing is illustrative (CWD has not published pipe routes).', generated: new Date().toISOString().slice(0, 10), lines }));
 console.log(`edges kept ${kept.length}/${edges.length} · polylines ${lines.length} · mains ${km('m')} km · distribution ${km('d')} km`);

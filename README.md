@@ -1,10 +1,10 @@
 # SAMAR-AGOS
 
-**Smart Water Monitoring and Response**: a hackathon prototype of a connected water-service platform for Catbalogan City, Samar.
+**Smart Water Monitoring and Response**: a connected water-service platform prototype for Catbalogan City, Samar, built around Catbalogan Water District (CWD).
 
 > Residents know what to expect. Water providers know where to act.
 
-All data is fictional, and the IoT telemetry is simulated. The app does not connect to any real utility, sensor, or account.
+Reference data is real and sourced (see **Data sources**). Operational records — reports, incidents, work orders, advisories, notifications, water points and emergency storage — are not preloaded: they are created in the app and stored in Firebase. Live readings (pressure, flow, reservoir level, water quality) are **simulated**, calibrated to CWD's published figures, because no live sensor data is public.
 
 ## Run
 
@@ -14,13 +14,29 @@ npm start
 
 Then open http://localhost:5173 (set `PORT` to change it). There is nothing to install: the app uses vanilla ES modules and its own SVG charts. It needs Node 18 or later.
 
-The service-area map is an interactive Leaflet map of Catbalogan City on OpenStreetMap or Esri satellite tiles, so it needs internet access. Without a connection it falls back to a built-in schematic SVG map. Zone boundaries and asset locations are approximate and fictionalized; barangay positions come from OpenStreetMap.
+The service-area map is an interactive Leaflet map of Catbalogan City on OpenStreetMap or Esri satellite tiles, so it needs internet access. Without a connection it falls back to a built-in schematic SVG map.
 
-The pipe network in `public/data/network.json` follows real Catbalogan roads from OpenStreetMap (© OpenStreetMap contributors, ODbL). The network is one connected graph fed from the Central Reservoir. Transmission mains (blue) follow the shortest road routes from the reservoir to each tank, well, booster pump and zone; every other connected street carries a distribution line (red). The routing is illustrative, not the actual utility network. To regenerate it (roads are cached in `scripts/.osm-roads-cache.json`; delete that file to re-download):
+**Service areas** are the 26 barangays CWD serves, with real boundaries from OpenStreetMap. Six barangays (Poblacion 3, 4, 6, 9, Canlapwas, Lagundi) have no boundary in OpenStreetMap and are drawn as approximate areas around their mapped centre. Regenerate with `node scripts/build-barangays.mjs` (writes `public/js/barangays.js`).
+
+The **pipe network** in `public/data/network.json` follows real roads (© OpenStreetMap contributors, ODbL) inside the served barangays, fed from the Poblacion 13 reservoir, with mains to the Kulador plant and the deep wells. It totals about 45 km, close to CWD's published 45.6 km, but the routing is illustrative: CWD has not published its pipe routes. Regenerate with:
 
 ```bash
 node scripts/build-network.mjs public/data/network.json
 ```
+
+## Data sources
+
+| Data | Source |
+|---|---|
+| Utility, water sources, treatment plant, reservoir, wells, booster pumps, pipe length, coverage (26 of 57 barangays), water-quality testing routine | Catbalogan Water District **Water Safety Plan 2022** (Rev 3.0), catbaloganwd.gov.ph |
+| Connections (9,681 active), production, billed volume, non-revenue water (32%), average use, water rates (effective 1 Mar 2018) | **LWUA Monthly Data Sheets**, Catbalogan WD, Jan–Dec 2022 |
+| Barangay populations (2020) | PSA 2020 Census of Population (via PhilAtlas) |
+| Barangay boundaries, hospitals, schools, city hall, jail, roads | OpenStreetMap contributors (ODbL) |
+| Weather forecast, climate normals (ERA5 2015–2024) | Open-Meteo |
+| Drinking-water limits | Philippine National Standards for Drinking Water (PNSDW 2017) |
+| Demo scenarios (Caramayon power outage, turbid Antiao River) | Modelled on the documented July 2026 Catbalogan water crisis (Daily Tribune, PIA) |
+
+Not publicly available, so **simulated** or **left blank**: live pressure, flow, reservoir level and water-quality readings (simulated); per-barangay connections (estimated from population); asset condition, maintenance dates and install years where CWD has not published them (shown as "Not recorded").
 
 ## Weather and climate (real data)
 
@@ -33,15 +49,15 @@ How weather affects the water supply (demand +2.5% per °C above the climate nor
 
 ## Water Safety (potability)
 
-**Monitor → Water Safety** checks drinking water before it reaches residents, at three monitoring points: treatment plant outlet, Central Reservoir outlet and distribution entry.
+**Monitor → Water Safety** checks drinking water before it reaches residents, at the sampling points in CWD's Water Safety Plan: the Kulador plant outlet, the Poblacion 13 reservoir and household taps.
 
 - **Online readings (SIMULATED IoT):** pH, turbidity, free residual chlorine, temperature and total dissolved solids.
 - **Lab results (MANUAL):** E. coli and total coliform.
 
 Limits follow the Philippine National Standards for Drinking Water (PNSDW 2017). Temperature uses an operational guide of ≤ 32 °C, since it has no health limit.
 
-- **Verdict:** any health limit exceeded makes the water **Not safe to drink**. The operator gets an alert, recommended actions and a one-click boil-water advisory.
-- **Demo control:** the floating panel's **Safe / Not safe** buttons switch all readings instantly. With Firebase, the choice is shared with every operator through `system/control`.
+- **Verdict:** any health limit exceeded makes the water **Not safe to use**. The operator gets an alert, recommended actions and a one-click boil-water advisory.
+- **Demo control** (demo mode only): the floating **Safe / Not safe** buttons switch all readings instantly. With Firebase, the choice is shared with every operator through `system/control`.
 
 ## Forecast accuracy tracking
 
@@ -59,14 +75,15 @@ The 90th-percentile error becomes the shaded "likely range" around the storage f
 
 SAMAR-AGOS uses Firebase project **`samar-agos-ic9sb`**. The web config is in `public/js/firebase-config.js`. It identifies the project but isn't secret; access is enforced by the security rules.
 
-- **Accounts:** email and password (Firebase Authentication). Residents create their own account and choose their barangay, which sets their service zone.
+- **Accounts:** email and password or Google (Firebase Authentication). Residents create their own account and choose their barangay.
 - **Staff (provider) access:** an email allowlist stored in `config/access`. The first account to sign in can claim staff administrator during profile setup. After that, staff add colleagues under **Sidebar → Staff access**.
 - **Shared data in Firestore:** `reports`, `incidents`, `workOrders`, `advisories`, `notifications`, `altWater`, `emergencyTanks`, `assets`, `system/control` (scenario state), `system/public` (zone report counts for residents), `counters/ids` (ticket numbers) and `users/{uid}` (profiles).
 - **Security rules** (`firestore.rules`):
   - residents read and update only their own reports and notifications
   - operational records are readable by signed-in users and writable only by staff
 - **Telemetry** is still simulated on each device, driven by the shared scenario state. It isn't written to Firestore.
-- **Demo data:** the first staff sign-in on an empty database loads the demo dataset. **Demo scenarios → Reset demo data** reseeds it for everyone.
+- **Starting data:** the first staff sign-in on an empty database stores CWD's asset registry and the scenario state. Nothing else is seeded.
+- **Demo mode** (account menu → Demo mode, per browser) shows the Demo scenarios panel and the Safe / Not safe switch. **Reset demo scenarios** restores normal operations and removes only simulated reports; real records are never deleted.
 
 Deploy rule changes after editing `firestore.rules`:
 
@@ -76,17 +93,16 @@ firebase deploy --only firestore:rules
 
 To run without Firebase (offline local demo with role picker), set `apiKey: ''` in `public/js/firebase-config.js`.
 
-## Demo walkthrough (core workflow)
+## Typical workflow
 
-1. Sign in as **Water Provider / Operator**. The Overview shows a **WARNING**: Zone B pressure is low and 17 resident reports are waiting for review.
-2. **Incidents → Report Inbox**: review the Zone B cluster against the pressure, flow, storage, and equipment evidence, then click **Create Incident**. You must confirm the operational evidence first; the report count alone is not enough.
-3. On the incident page, **Create Work Order** and **Publish Advisory** (there's a live resident preview; the restoration time is optional).
-4. **Run Response Simulation**. Use the sidebar's **Demo scenarios** to apply *Pump Failure* and see a forecast shortage risk. Then compare *No Action* with *Activate Emergency Water*.
-5. Open the work order and step it through En Route → … → **Completed** (repair notes and a verification reading). Zone B pressure recovers on the next telemetry updates.
-6. **Resolve Incident**. This sends residents a restoration notification.
-7. Click **Open resident view** and go to **My Reports → WR-2026-1038**. Answer **Service Restored** or **Problem Still Exists**. The second answer reopens the incident and alerts the provider.
+1. A resident reports a problem (**Report a Problem**). It appears in the operator's **Incidents → Report Inbox**, grouped by barangay.
+2. The operator checks the evidence (pressure, flow, storage, equipment) and creates an incident.
+3. From the incident, the operator creates a work order and publishes an advisory to the affected barangays.
+4. The **Response Simulator** compares responses (restore the Caramayon pumps, tanker water, demand management) against the forecast.
+5. The crew completes the work order with repair notes and a verification reading; the operator resolves the incident and residents are notified.
+6. Residents confirm whether service returned; "problem still exists" reopens the incident.
 
-The Demo scenarios panel includes a live checklist of these steps and a **Reset demo data** button.
+Turn on **Demo mode** to trigger scenarios (Caramayon power outage, turbid Antiao River, low pressure in Maulong, main break in Canlapwas) for presentations.
 
 ## Structure
 
@@ -97,7 +113,9 @@ public/css/styles.css        design system (tokens, components, responsive)
 public/js/
   app.js                     shell, routing, login, notifications, demo panel
   store.js                   state, IoT simulation engine, forecast, alerts, workflow actions
-  data.js                    fictional seed data (zones, assets, reports, incidents…)
+  data.js                    reference data: CWD facts, water rates, asset registry, service areas
+  barangays.js               generated: served barangays (PSA 2020 population, OSM boundaries)
+  assetinfo.js               asset categories, lifecycle (documented install years), simulated run logs
   ui.js                      components: badges, KPI, cards, timeline, table, modal, drawer, toast
   charts.js                  SVG line/bar/sparkline charts with tooltips
   livemap.js                 interactive Leaflet map (Catbalogan City): live markers, clustering, layers
@@ -109,4 +127,4 @@ public/js/
 
 ## Data transparency
 
-Every important value carries a source badge: `LIVE`, `MANUAL`, `ESTIMATED`, `FORECAST`, `SIMULATED`, `RESIDENT REPORTED`. Each 3-second telemetry tick advances the simulation by 5 minutes (accelerated time). State persists in `localStorage`, so the resident and provider views share one connected dataset.
+Every important value carries a source badge: `LIVE`, `MANUAL` (recorded or published data), `ESTIMATED`, `FORECAST`, `SIMULATED`, `RESIDENT REPORTED`, `CLIMATE RECORD`. The simulation is calibrated to CWD: one 440 m³ reservoir (100 m³ firefighting reserve), ~9.6 ML/day average production, and supply from the Caramayon springs (91 L/s pumped), Masacpasac spring, Kulador plant and deep wells. Each 3-second tick advances it by 5 minutes (accelerated time).

@@ -59,7 +59,7 @@ export function openWorkOrderModal(prefill = {}) {
   const inc = prefill.incidentId && s.incidents.find((i) => i.id === prefill.incidentId);
   const zone = inc?.zone || prefill.zone;
   const assets = s.assets.filter((a) => !zone || a.zone === zone || a.id === prefill.assetId);
-  const defAsset = prefill.assetId || (zone === 'B' ? 'PL-B2' : zone === 'C' ? 'PL-C2' : assets[0]?.id);
+  const defAsset = prefill.assetId || assets[0]?.id || 'PL-NET';
   const target = toLocalInput(Date.now() + (prefill.priority === 'Critical' ? 3 : 6) * 3600000);
   const desc = prefill.description || (inc ? `Inspect and repair cause of ${inc.title.toLowerCase()}. Confirm pressure and flow recovery after repair.` : '');
   openModal(
@@ -70,7 +70,7 @@ export function openWorkOrderModal(prefill = {}) {
         ${field('Asset', `<select name="assetId" id="wo-asset">${s.assets.map((a) => `<option value="${a.id}" ${a.id === defAsset ? 'selected' : ''}>${a.id} — ${esc(a.name)}</option>`).join('')}</select>`, { id: 'wo-asset', req: true })}
         ${field('Location', `<input name="location" id="wo-loc" value="${esc(prefill.location || (inc ? `${zoneById(inc.zone).name} — ${zoneById(inc.zone).barangays.join(', ')}` : ''))}" required/>`, { id: 'wo-loc', req: true })}
         ${field('Priority', `<select name="priority" id="wo-pri">${['Critical', 'High', 'Medium', 'Low'].map((p) => `<option ${p === (prefill.priority || (inc?.severity === 'High' ? 'High' : 'Medium')) ? 'selected' : ''}>${p}</option>`).join('')}</select>`, { id: 'wo-pri', req: true })}
-        ${field('Assigned team', `<select name="team" id="wo-team">${TEAMS.map((t) => `<option ${t === (prefill.team || 'Field Team Alpha') ? 'selected' : ''}>${t}</option>`).join('')}</select>`, { id: 'wo-team', req: true })}
+        ${field('Assigned team', `<input name="team" id="wo-team" list="wo-teams" value="${esc(prefill.team || '')}" placeholder="Crew or team name"/><datalist id="wo-teams">${[...new Set(s.workOrders.map((w) => w.team).filter(Boolean))].map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>`, { id: 'wo-team', optional: true })}
         ${field('Target completion', `<input type="datetime-local" name="target" id="wo-target" value="${target}"/>`, { id: 'wo-target', req: true })}
       </div>
       ${field('Description', `<textarea name="description" id="wo-desc" rows="3">${esc(desc)}</textarea>`, { id: 'wo-desc', req: true })}
@@ -99,7 +99,7 @@ export function openAdvisoryModal(prefill = {}) {
       (inc
         ? `Residents in Barangays ${z.barangays.join(', ').replace(/, ([^,]*)$/, ', and $1')} may experience ${isPressure ? 'reduced water pressure' : 'service disruption'} while crews investigate a distribution-line issue.${woAssigned ? ' Repair team assigned.' : ''}`
         : ''),
-    instructions: prefill.instructions || 'Store water for drinking and cooking. Use water from the Barangay Hall distribution point if needed. Report new leaks through SAMAR-AGOS.',
+    instructions: prefill.instructions || 'Store water for drinking and cooking. Check SAMAR-AGOS for water distribution point if needed. Report new leaks through SAMAR-AGOS.',
     startAt: toLocalInput(Date.now()),
     etrKnown: false,
     etr: toLocalInput(Date.now() + 4 * 3600000),
@@ -107,7 +107,7 @@ export function openAdvisoryModal(prefill = {}) {
   };
   openModal('Publish Service Advisory', advForm(), {
     wide: true,
-    footer: `<span class="muted sm mr-auto">${icon('users', 14)} Residents in selected zones are notified on publish.</span><button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="adv-publish">${icon('megaphone', 16)} Publish advisory</button>`,
+    footer: `<span class="muted sm mr-auto">${icon('users', 14)} Residents in the selected barangays are notified on publish.</span><button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="adv-publish">${icon('megaphone', 16)} Publish advisory</button>`,
   });
 }
 
@@ -170,26 +170,23 @@ export function openMapPanel(kind, id) {
   if (kind === 'asset') {
     const a = s.assets.find((x) => x.id === id);
     const sev = assetLiveStatus(a, s);
-    let body = `<div class="pnl-st">${status(sev, SEV[sev].label, { lg: true })}<span class="muted sm">${esc(a.type)} · ${esc(zoneById(a.zone)?.name || '')}</span></div><dl class="kv">`;
+    let body = `<div class="pnl-st">${status(sev, SEV[sev].label, { lg: true })}<span class="muted sm">${esc(a.type)} · ${esc(a.site || zoneById(a.zone)?.name || '')}</span></div><dl class="kv">`;
     if (a.type === 'Reservoir') {
       const lv = t.volML / S.RES_CAP_ML;
-      body += `<div><dt>Current volume</dt><dd><strong>${fmt(t.volML, 2)} ML</strong> ${src('SIMULATED')}</dd></div><div><dt>Capacity</dt><dd>${fmt(S.RES_CAP_ML, 1)} ML</dd></div>
-        <div><dt>Level</dt><dd><strong>${Math.round(lv * 100)}%</strong>${gaugeBar(lv * 100, { sev, marker: 30 })}</dd></div>
+      body += `<div><dt>Current volume</dt><dd><strong>${fmtL(t.volML * 1e6)}</strong> ${src('SIMULATED')}</dd></div><div><dt>Capacity</dt><dd>440,000 L</dd></div>
+        <div><dt>Level</dt><dd><strong>${Math.round(lv * 100)}%</strong>${gaugeBar(lv * 100, { sev, marker: Math.round(S.MIN_RESERVE * 100) })}</dd></div>
         <div><dt>Inflow</dt><dd>${fmt(S.mlToLs(t.production + t.transfer), 0)} L/s ${src('SIMULATED')}</dd></div><div><dt>Outflow</dt><dd>${fmt(S.mlToLs(t.demand), 0)} L/s ${src('SIMULATED')}</dd></div>`;
-    } else if (a.type === 'Tank') {
+    } else if (a.type === 'Tank' && t.tanks[a.id]) {
       const tk = t.tanks[a.id];
       body += `<div><dt>Level</dt><dd><strong>${Math.round(tk.level * 100)}%</strong>${gaugeBar(tk.level * 100, { sev: tk.status })}</dd></div><div><dt>Current volume</dt><dd>${fmtL(tk.volL)} ${src('SIMULATED')}</dd></div><div><dt>Capacity</dt><dd>${fmtL(tk.capL)}</dd></div>`;
-    } else if (a.type === 'Pump') {
+    } else if (a.type === 'Pump' && t.pumps[a.id]) {
       const p = t.pumps[a.id];
-      body += `<div><dt>Run status</dt><dd>${esc(p.units)}</dd></div><div><dt>Flow</dt><dd>${fmt(p.flowLs, 1)} L/s ${src('SIMULATED')}</dd></div><div><dt>Vibration</dt><dd>${fmt(p.vibration, 1)} mm/s ${src('SIMULATED')}</dd></div><div><dt>Power draw</dt><dd>${fmt(p.powerKw, 1)} kW ${src('SIMULATED')}</dd></div>`;
-    } else if (a.id === 'PT-B1') {
-      body += `<div><dt>Pressure</dt><dd><strong>${fmt(t.zones.B.pressure, 0)} PSI</strong> ${src('SIMULATED')}</dd></div>`;
-    } else if (a.id === 'TS-E1') {
-      body += `<div><dt>Turbidity</dt><dd><strong>${fmt(t.turbidityE, 1)} NTU</strong> ${src('SIMULATED')}</dd></div><div><dt>Guideline</dt><dd>5 NTU</dd></div>`;
+      body += `<div><dt>Run status</dt><dd>${esc(p.units)}</dd></div><div><dt>Flow</dt><dd>${p.flowLs != null ? `${fmt(p.flowLs, 1)} L/s` : 'Not metered'} ${src('SIMULATED')}</dd></div><div><dt>Vibration</dt><dd>${fmt(p.vibration, 1)} mm/s ${src('SIMULATED')}</dd></div><div><dt>Power draw</dt><dd>${fmt(p.powerKw, 1)} kW ${src('SIMULATED')}</dd></div>`;
     } else if (a.status === 'offline') {
-      body += `<div><dt>Last data</dt><dd>9 hours ago — sensor not reporting</dd></div>`;
+      body += `<div><dt>Last data</dt><dd>Not reporting</dd></div>`;
     }
-    body += `<div><dt>Condition</dt><dd>${esc(a.condition)}</dd></div><div><dt>Last maintenance</dt><dd>${fmtDate(a.lastMaint)}</dd></div><div><dt>Last update</dt><dd>${a.status === 'offline' ? '—' : updatedAgo(t.lastUpdate)}</dd></div></dl>
+    if (a.spec) body += `<div class="kv-wide"><dt>Specification</dt><dd>${esc(a.spec)}</dd></div>`;
+    body += `<div><dt>Condition</dt><dd>${esc(a.condition)}</dd></div><div><dt>Last maintenance</dt><dd>${a.lastMaint ? fmtDate(a.lastMaint) : 'Not recorded'}</dd></div><div><dt>Last update</dt><dd>${a.status === 'offline' ? '—' : updatedAgo(t.lastUpdate)}</dd></div></dl>
       <div class="pnl-a"><a class="btn btn--outline btn--sm" href="#/p/assets/${a.id}">Asset details</a><button class="btn btn--primary btn--sm" data-action="wo-new" data-asset="${a.id}">${icon('wrench', 14)} Work order</button></div>`;
     return openDrawer(esc(a.name), body, { sub: `${a.id}` });
   }
@@ -207,7 +204,7 @@ export function openMapPanel(kind, id) {
       <div><dt>Open resident reports</dt><dd>${reps.length} ${src('RESIDENT REPORTED')}</dd></div><div><dt>Active incidents</dt><dd>${incs.map((i) => `<a href="#/p/incidents/${i.id}">${i.id}</a>`).join(', ') || 'None'}</dd></div>
       <div><dt>Critical facilities</dt><dd>${CRITICAL_FACILITIES.filter((f) => f.zone === id).map((f) => esc(f.name)).join(', ') || 'None'}</dd></div></dl>
       <div class="pnl-a"><a class="btn btn--primary btn--sm" href="#/p/incidents">Review reports</a></div>`,
-      { sub: 'Service zone' }
+      { sub: 'Barangay served by CWD' }
     );
   }
   if (kind === 'report') {

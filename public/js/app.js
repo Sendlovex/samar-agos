@@ -141,7 +141,7 @@ function renderLogin() {
             ${icon('chev-r', 20)}
           </button>
         </div>
-        <div class="demo-note">${icon('info', 16)}<span><strong>Hackathon prototype.</strong> All data is fictional and IoT telemetry is simulated. No real accounts, utilities, or sensors are connected.</span></div>
+        <div class="demo-note">${icon('info', 16)}<span><strong>Offline mode — no database connected.</strong> Reference data comes from Catbalogan Water District’s published figures; live readings are simulated.</span></div>
       </div>
     </section>
   </div>`;
@@ -172,7 +172,8 @@ const brandPanel = () => `<section class="login-brand">
 
 function renderSplash(msg) {
   current = null;
-  app.innerHTML = `<div class="splash" role="status">${logoMark(44)}<p>${esc(msg)}</p></div>`;
+  // Loading screens show only the logo and a progress bar; the message is kept for screen readers.
+  app.innerHTML = `<div class="splash" role="status">${logoMark(52)}<span class="splash-bar" aria-hidden="true"></span><span class="sr-only">${esc(msg)}</span></div>`;
 }
 
 function renderAuth() {
@@ -261,7 +262,7 @@ function renderOnboarding() {
   app.innerHTML = `<div class="login">${brandPanel()}
     <section class="login-panel"><div class="login-box">
       <h2>Set up your profile</h2>
-      <p class="muted">Signed in as ${esc(ses.email)}. Your barangay tells us which service zone and advisories apply to you.</p>
+      <p class="muted">Signed in as ${esc(ses.email)}. Your barangay tells us which advisories and service updates apply to you.</p>
       <form class="form" id="onb-form" novalidate>
         ${profileFields()}
         ${!ses.accessExists ? `<label class="chk onb-admin"><input type="checkbox" id="onb-admin"/> <span><strong>I'm setting up SAMAR-AGOS for our water utility.</strong> Make this account the first staff administrator (only the first account can do this).</span></label>` : ''}
@@ -308,8 +309,8 @@ function applyProfile(ses) {
     x: home.x,
     y: home.y,
     phone: p.phone || 'Not provided',
-    account: `04${hashNum(ses.uid, 90) + 10}-${String(hashNum(ses.uid + 'a', 1000)).padStart(3, '0')}-${String(hashNum(ses.uid + 'b', 10000)).padStart(4, '0')}`,
-    meter: `MTR-${zone.id}-${String(hashNum(ses.uid + 'm', 100000)).padStart(5, '0')}`,
+    account: '—',
+    meter: '—',
     email: ses.email,
   });
   Object.assign(PROVIDER_USER, { name, initials, role: ses.isProvider ? 'Water utility staff' : 'Resident', email: ses.email });
@@ -338,7 +339,7 @@ async function boot() {
     app.innerHTML = `<div class="splash">${logoMark(44)}<p>Could not reach the SAMAR-AGOS server. Check your internet connection and reload.</p></div>`;
     return;
   }
-  S.setRemote({ flush: B.flush, allocIds: B.allocIds, getSession: B.getSession, setNotifState: B.setNotifState, reset: B.resetRemote });
+  S.setRemote({ flush: B.flush, allocIds: B.allocIds, getSession: B.getSession, setNotifState: B.setNotifState, reset: B.resetRemote, remove: B.removeDoc });
   B.onAuth(async (user) => {
     if (!user) {
       role = null;
@@ -390,7 +391,7 @@ function renderResidentShell(page, html) {
       <a href="#/r/home" class="rh-logo" aria-label="SAMAR-AGOS home">${logo({ size: 32, tagline: false })}</a>
       <nav class="rh-nav" aria-label="Resident">${RES_NAV.filter((n) => !['notifications', 'profile'].includes(n.id)).map((n) => `<a href="#/r/${n.id}" class="${page === n.id || (page === 'reports' && n.id === 'reports') ? 'is-active' : ''}">${esc(n.label)}</a>`).join('')}</nav>
       <div class="rh-right">
-        <a href="#/r/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
+        <button type="button" class="icon-btn bell" data-action="notif-panel" data-aud="resident" aria-haspopup="dialog" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></button>
         <a href="#/r/profile" class="avatar" aria-label="Profile">${RESIDENT.initials}</a>
       </div></div>
     </header>
@@ -399,7 +400,7 @@ function renderResidentShell(page, html) {
       ${RES_NAV.filter((n) => primary.includes(n.id)).map((n) => `<a href="#/r/${n.id}" class="${page === n.id || (n.id === 'reports' && page === 'reports') ? 'is-active' : ''} ${n.id === 'report' ? 'bn-cta' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 20)}<span>${esc(n.short)}</span></a>`).join('')}
       <button class="${isMore ? 'is-active' : ''}" data-action="res-more">${icon('menu', 20)}<span>More</span></button>
     </nav>
-    <footer class="rv-foot">SAMAR-AGOS prototype · ${esc(UTILITY.name)} (fictional) · ${B.FB_ENABLED ? 'Telemetry simulated' : 'Demo data only'}${canSwitchRole() ? ' · <button class="linkish" data-action="switch-role">Switch to provider view</button>' : ''}</footer>
+    <footer class="rv-foot">SAMAR-AGOS · ${esc(UTILITY.name)} · live readings simulated${canSwitchRole() ? ' · <button class="linkish" data-action="switch-role">Switch to provider view</button>' : ''}</footer>
   </div>`;
 }
 
@@ -429,14 +430,31 @@ function renderProviderShell(page, view, html) {
         <div class="tb-fresh" id="tb-fresh">${freshness()}</div>
         <div class="tb-right">
           <span id="tb-status">${headerStatus()}</span>
-          <button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>
-          <a href="#/p/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
+          ${isDemoMode() ? `<button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>` : ''}
+          <button type="button" class="icon-btn bell" data-action="notif-panel" data-aud="provider" aria-haspopup="dialog" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></button>
           ${accountMenu()}
         </div>
       </header>
       <main id="view" class="pv-content scroll-root" tabindex="-1">${html}</main>
     </div>
   </div>`;
+}
+
+// Demo tools (scenarios, Safe/Not safe switch) are hidden unless demo mode is on for this browser.
+const DEMO_KEY = 'samaragos.demoMode';
+export function isDemoMode() {
+  try {
+    return localStorage.getItem(DEMO_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+function setDemoMode(on) {
+  try {
+    on ? localStorage.setItem(DEMO_KEY, '1') : localStorage.removeItem(DEMO_KEY);
+  } catch (e) {
+    /* ignore */
+  }
 }
 
 function accountMenu() {
@@ -447,6 +465,7 @@ function accountMenu() {
       <div class="acct-head"><span class="avatar avatar--navy">${PROVIDER_USER.initials}</span><span><strong>${esc(PROVIDER_USER.name)}</strong><span>${esc(email || PROVIDER_USER.role)}</span></span></div>
       <button data-action="switch-role">${icon('home', 16)}<span>Resident view</span></button>
       ${B.FB_ENABLED ? `<button data-action="team-open">${icon('users', 16)}<span>Staff access</span></button>` : ''}
+      <button data-action="demo-toggle" aria-pressed="${isDemoMode()}">${icon('play', 16)}<span>Demo mode: ${isDemoMode() ? 'On' : 'Off'}</span></button>
       <button data-action="logout" class="acct-out">${icon('logout', 16)}<span>Sign out</span></button>
     </div>
   </details>`;
@@ -608,6 +627,11 @@ register({
     );
   },
   'demo-panel': () => openDemoPanel(),
+  'demo-toggle': () => {
+    setDemoMode(!isDemoMode());
+    showToast({ msg: isDemoMode() ? 'Demo mode on — scenario controls are shown' : 'Demo mode off', kind: 'info' });
+    render();
+  },
   'apply-scenario': (el) =>
     busy(el, async () => {
       await S.applyScenario(el.dataset.id);
@@ -615,11 +639,11 @@ register({
     }),
   'reset-demo': async () => {
     const ok = await confirmDialog({
-      title: 'Reset demo data?',
+      title: 'Reset demo scenarios?',
       body: B.FB_ENABLED
-        ? 'This deletes all reports, incidents, work orders, advisories and notifications in the shared database — for every user — and restores the starting scenario. User accounts and staff access are kept.'
-        : 'All incidents, work orders, advisories, and reports created during this demo will be cleared and the starting scenario restored.',
-      confirm: 'Reset demo',
+        ? 'Restores normal operations and removes simulated (demo) reports. Real reports, incidents, work orders and advisories are kept.'
+        : 'Clears everything recorded in this offline session and restores normal operations.',
+      confirm: 'Reset',
       danger: true,
     });
     if (ok) {
@@ -633,11 +657,14 @@ register({
   },
   'notif-open': (el) => {
     S.setNotification(el.dataset.id, 'read');
+    if (el.closest('.modal--notif')) closeOverlay();
     if (el.dataset.link) location.hash = el.dataset.link;
   },
-  'notif-read': (el) => S.setNotification(el.dataset.id, el.dataset.to),
-  'notif-archive': (el) => S.setNotification(el.dataset.id, 'archived'),
-  'notif-allread': (el) => S.markAllRead(el.dataset.aud),
+  'notif-read': (el) => (S.setNotification(el.dataset.id, el.dataset.to), refreshNotifPanel()),
+  'notif-archive': (el) => (S.setNotification(el.dataset.id, 'archived'), refreshNotifPanel()),
+  'notif-allread': (el) => (S.markAllRead(el.dataset.aud), refreshNotifPanel()),
+  'notif-panel': (el) => openNotifPanel(el.dataset.aud),
+  'notif-ptab': (el) => ((panelTab = el.dataset.id), refreshNotifPanel()),
   'notif-tab': (el) => {
     notifTab = el.dataset.id;
     render();
@@ -645,44 +672,87 @@ register({
 });
 
 // ---------------------------------------------------------------- demo control panel
-function walkthrough() {
-  const s = S.getState();
-  const incB = s.incidents.find((i) => i.zone === 'B' && i.id !== 'INC-2026-038' && i.detectedAt > s.seededAt - 864e5 && i.type !== 'Equipment');
-  const wo = incB && s.workOrders.find((w) => w.incidentId === incB.id);
-  const adv = incB && s.advisories.find((a) => a.incidentId === incB.id);
-  const mine = s.reports.filter((r) => r.mine);
-  return [
-    { done: mine.length > 0, text: 'Resident reports low pressure', link: '#/r/report', who: 'Resident' },
-    { done: !!incB, text: 'Operator reviews report cluster & evidence → creates incident', link: '#/p/incidents', who: 'Provider' },
-    { done: !!incB, text: 'Check forecast impact and run the Response Simulator', link: '#/p/simulator', who: 'Provider' },
-    { done: !!wo, text: 'Create a work order from the incident', link: incB ? `#/p/incidents/${incB.id}` : '#/p/incidents', who: 'Provider' },
-    { done: !!adv, text: 'Publish an advisory → residents notified', link: incB ? `#/p/incidents/${incB.id}` : '#/p/advisories', who: 'Provider' },
-    { done: wo?.status === 'Completed', text: 'Advance field work order to Completed (readings recover)', link: wo ? `#/p/work-orders/${wo.id}` : '#/p/work-orders', who: 'Field' },
-    { done: incB?.status === 'Resolved', text: 'Resolve incident → restoration notification', link: incB ? `#/p/incidents/${incB.id}` : '#/p/incidents', who: 'Provider' },
-    { done: mine.some((r) => r.residentResponse), text: 'Resident confirms whether service returned', link: '#/r/reports', who: 'Resident' },
-  ];
-}
-
 function openDemoPanel() {
   const s = S.getState();
-  const steps = walkthrough();
   const act = new Set(s.activeScenarios);
   openDrawer(
     'Demo scenarios',
-    `<div class="banner banner--info">${icon('info', 18)}<div class="banner-c"><strong>Provider-only demonstration control.</strong><div>Scenarios change simulated telemetry only. Effects propagate to charts, alerts, forecasts, reports, and the resident portal.</div></div></div>
+    `<div class="banner banner--info">${icon('info', 18)}<div class="banner-c"><strong>Demo mode.</strong><div>Scenarios change simulated readings only, modelled on documented Catbalogan events. Effects show in charts, alerts, forecasts and the resident portal.</div></div></div>
     <h3 class="sec-t">Trigger a system scenario</h3>
     <div class="scn-list">${Object.entries(SCENARIOS)
       .map(
         ([k, v]) => `<div class="scn ${act.has(k) ? 'is-on' : ''}"><div><strong>${v.label}</strong>${act.has(k) ? ' ' + status('warning', 'Active') : ''}<p>${v.desc}</p></div><button class="btn btn--sm ${k === 'normal' ? 'btn--outline' : 'btn--primary'}" data-action="apply-scenario" data-id="${k}">${k === 'normal' ? 'Restore normal' : 'Apply'}</button></div>`
       )
       .join('')}</div>
-    <h3 class="sec-t">Core workflow walkthrough</h3>
-    <ol class="walk">${steps.map((st, i) => `<li class="${st.done ? 'is-done' : ''}"><span class="walk-n">${st.done ? icon('check', 13) : i + 1}</span><a href="${st.link}">${esc(st.text)}</a><span class="walk-who">${st.who}</span></li>`).join('')}</ol>
-    <p class="muted sm">Tip: open the resident view (sidebar → "Open resident view") between steps to see what residents see.</p>
-    <button class="btn btn--danger-ghost" data-action="reset-demo">${icon('refresh', 15)} Reset demo data</button>`,
-    { sub: 'Simulated data · not live control' }
+    <button class="btn btn--danger-ghost" data-action="reset-demo">${icon('refresh', 15)} Reset demo scenarios</button>`,
+    { sub: 'Simulated readings · not live control' }
   );
 }
+
+// ---------------------------------------------------------------- notifications modal (bell)
+let panelTab = 'unread';
+let panelAud = null;
+// Plain category label shown above each notification (e.g. "Distribution", "Advisory").
+const notifKind = (n) => {
+  const k = String(n.kind || '');
+  return { advisory: 'Advisory', restored: 'Service restored', water: 'Water service', report: 'Your report', reading: 'Reading' }[k] || k.charAt(0).toUpperCase() + k.slice(1);
+};
+
+function notifPanelBody(aud) {
+  const all = S.getState()
+    .notifications.filter((n) => n.audience === aud && n.state !== 'archived')
+    .sort((a, b) => b.at - a.at);
+  const unread = all.filter((n) => n.state === 'unread');
+  const read = all.filter((n) => n.state === 'read');
+  const list = panelTab === 'read' ? read : unread;
+  const tab = (id, label, n) => `<button role="tab" aria-selected="${panelTab === id}" class="${panelTab === id ? 'is-on' : ''}" data-action="notif-ptab" data-id="${id}">${label}<span>${n}</span></button>`;
+  return `<div class="np-tabs" role="tablist">${tab('unread', 'Unread', unread.length)}${tab('read', 'Read', read.length)}</div>
+    <div class="np-list">${
+      list.length
+        ? list
+            .map(
+              (n) => `<article class="np ${n.state === 'unread' ? 'is-unread' : ''}">
+          <div class="np-m"><span>${esc(n.kind ? notifKind(n) : 'Update')}</span><span class="np-time">${relTime(n.at)}</span></div>
+          <div class="np-c" role="button" tabindex="0" data-action="notif-open" data-id="${n.id}" data-link="${esc(n.link || '')}">
+            <div class="np-t">${esc(n.title)}${n.state === 'unread' ? '<span class="sr-only"> (unread)</span>' : ''}</div>
+            ${n.body ? `<div class="np-b">${esc(n.body)}</div>` : ''}
+          </div>
+          <button class="np-x" data-action="notif-read" data-id="${n.id}" data-to="${n.state === 'unread' ? 'read' : 'unread'}">${n.state === 'unread' ? 'Mark as read' : 'Mark as unread'}</button>
+        </article>`
+            )
+            .join('')
+        : `<div class="np-empty"><strong>${panelTab === 'unread' ? 'You’re all caught up' : 'No read notifications'}</strong><span>${panelTab === 'unread' ? 'New alerts and updates will appear here.' : 'Notifications you open or mark as read appear here.'}</span></div>`
+    }</div>`;
+}
+
+function openNotifPanel(aud) {
+  panelAud = aud;
+  panelSig = '';
+  panelTab = S.getState().notifications.some((n) => n.audience === aud && n.state === 'unread') ? 'unread' : 'read';
+  openModal('Notifications', notifPanelBody(aud), {
+    footer: `<button class="btn btn--outline btn--sm" data-action="notif-allread" data-aud="${aud}">Mark all as read</button>`,
+    onMount: (m) => {
+      m.classList.add('modal--notif');
+      m.parentElement.classList.add('ov--notif');
+    },
+  });
+}
+
+// Re-render the open panel (after read/unread changes or when new alerts arrive).
+let panelSig = '';
+function refreshNotifPanel() {
+  const b = document.querySelector('.modal--notif .modal-b');
+  if (!b || !panelAud) return;
+  // Only redraw when something changed, so focus and hover aren't lost on every telemetry tick.
+  const sig = panelTab + S.getState().notifications.filter((n) => n.audience === panelAud).map((n) => n.id + n.state).join();
+  if (sig === panelSig && b.innerHTML) return;
+  panelSig = sig;
+  const y = b.scrollTop;
+  b.innerHTML = notifPanelBody(panelAud);
+  b.scrollTop = y;
+}
+S.on('change', refreshNotifPanel);
+S.on('tick', refreshNotifPanel);
 
 // ---------------------------------------------------------------- notifications page (shared)
 let notifTab = 'unread';

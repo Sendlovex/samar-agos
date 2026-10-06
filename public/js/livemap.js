@@ -1,6 +1,6 @@
 // Interactive geographic map (Leaflet) for Catbalogan City, Samar.
-// Operational data keeps its schematic x/y coordinates; they are projected onto
-// real lat/lng here. Zone boundaries and asset positions remain fictionalized.
+// Operational data keeps planar x/y coordinates; they are projected onto real lat/lng here.
+// Barangay boundaries come from OpenStreetMap; facility positions from the CWD Water Safety Plan 2022.
 import { getState, RES_CAP_ML } from './store.js';
 import { ZONES, MAP, CRITICAL_FACILITIES, RESIDENT, reportTypeLabel, zoneById } from './data.js';
 import { parsePoly, esc, fmt, toLL, toXY } from './util.js';
@@ -16,9 +16,8 @@ const TYPE_LAYER = { Reservoir: 'storage', Tank: 'storage', 'Water Source': 'sou
 
 // Two clearly different classes, as on utility network maps: blue mains, red distribution.
 const NET = { main: '#1F5BB5', dist: '#E2575F', issue: '#F59E0B' };
-const PIPE_ASSET = { B: 'PL-B2', C: 'PL-C2', D: 'PL-D1' }; // zone distribution network → asset record
 // Assets that tap into the street network with a short service connection
-const CONNECT = ['RES-01', 'WEL-01', 'WEL-02', 'TNK-01', 'TNK-02', 'TNK-03', 'PS-03'];
+const CONNECT = ['RES-P13', 'WTP-KUL', 'WEL-EXE', 'WEL-LAG', 'WEL-PAY']; // facilities joined to the nearest street main
 
 // Street-following pipe network (roads © OpenStreetMap), loaded once.
 let network = null;
@@ -231,7 +230,7 @@ function addLegend(I) {
   ctrl(
     'bottomleft',
     `<div class="lm-legend"><span><i class="lm-legend-line" style="background:${NET.main}"></i>Transmission main</span><span><i class="lm-legend-line lm-legend-line--thin" style="background:${NET.dist}"></i>Distribution line</span><span><i class="lm-legend-line lm-legend-line--thin" style="background:repeating-linear-gradient(90deg,${NET.issue} 0 5px,transparent 5px 8px)"></i>Low-pressure area</span><span>${dot(COL.normal)}Normal</span><span>${dot(COL.warning)}Warning</span><span>${dot(COL.critical)}Critical</span><span>${dot(COL.offline)}Offline</span><span><i class="lm-legend-rep"></i>Resident report</span><span><i class="lm-legend-inc"></i>Incident</span></div>
-     <div class="lm-note">Service zones and assets are approximate and fictionalized · readings SIMULATED</div>`
+     <div class="lm-note">Barangays: OpenStreetMap (some approximate) · facilities: CWD Water Safety Plan 2022 · pipe routes illustrative · readings SIMULATED</div>`
   ).addTo(I.map);
 }
 
@@ -261,10 +260,8 @@ function assetTip(a, s, sev) {
   const t = s.tele;
   let r = '';
   if (a.type === 'Reservoir') r = `${Math.round((t.volML / RES_CAP_ML) * 100)}% · ${fmt(t.volML, 2)} ML`;
-  else if (a.type === 'Tank') r = `${Math.round(t.tanks[a.id].level * 100)}% full`;
-  else if (a.type === 'Pump') r = t.pumps[a.id].status === 'offline' ? 'Offline' : `${fmt(t.pumps[a.id].flowLs, 1)} L/s`;
-  else if (a.id === 'PT-B1') r = `${fmt(t.zones.B.pressure, 0)} PSI`;
-  else if (a.id === 'TS-E1') r = `${fmt(t.turbidityE, 1)} NTU`;
+  else if (a.type === 'Tank' && t.tanks[a.id]) r = `${Math.round(t.tanks[a.id].level * 100)}% full`;
+  else if (a.type === 'Pump' && t.pumps[a.id]) r = t.pumps[a.id].status === 'offline' ? 'Offline' : t.pumps[a.id].flowLs != null ? `${fmt(t.pumps[a.id].flowLs, 1)} L/s` : 'Running';
   else if (a.status === 'offline') r = 'Not reporting';
   const label = { normal: 'Normal', warning: 'Warning', critical: 'Critical', offline: 'Offline' }[sev];
   return `<strong>${esc(a.name)}</strong><span>${esc(a.type)} · ${label}${r ? ` · ${r}` : ''}</span>${a.type !== 'Valve' && r ? '<em>SIMULATED</em>' : ''}`;
@@ -306,7 +303,7 @@ function sync(I) {
     let p = I.zones.get(z.id);
     if (!p) {
       p = L.polygon(zoneLL(z.id), { ...style, interactive: mode === 'provider' }).addTo(I.groups.zones);
-      p.bindTooltip(label, { permanent: true, direction: 'center', className: 'lm-zone' });
+      p.bindTooltip(label, { permanent: false, sticky: true, direction: 'top', className: 'lm-zone' });
       if (mode === 'provider') {
         p.on('mouseover', () => p.setStyle({ weight: 3, fillOpacity: Math.max(0.12, p.options.fillOpacity + 0.06) }));
         p.on('mouseout', () => sync(I));
@@ -322,8 +319,8 @@ function sync(I) {
   if (mode === 'provider') {
     if (I.net) syncNetwork(I, s);
     // Schematic pipelines: only the raw-water/transmission links once the street network is drawn
-    MAP.pipelines.filter((pl) => !I.net || pl.id === 'PL-R1' || pl.id === 'PL-M1').forEach((pl) => {
-      const issue = ((pl.id === 'PL-B2' || pl.id === 'PL-B3') && s.zoneIssues.B) || (pl.id === 'PL-C2' && s.zoneIssues.C) || (pl.id === 'PL-D1' && s.assets.find((a) => a.id === 'PL-D1')?.status === 'warning');
+    MAP.pipelines.forEach((pl) => {
+      const issue = s.assets.find((a) => a.id === pl.id)?.status === 'warning';
       const style = { color: issue ? COL.warning : pl.kind === 'raw' ? '#64748B' : '#1E4E8C', weight: pl.kind === 'main' ? 4 : 2.6, opacity: 0.9, dashArray: pl.kind === 'raw' ? '6 6' : issue ? '10 8' : null, className: issue ? 'lm-pipe-alert' : '' };
       let line = I.pipes.get(pl.id);
       const asset = s.assets.find((a) => a.id === pl.id);
@@ -364,7 +361,7 @@ function sync(I) {
     CRITICAL_FACILITIES.forEach((f) => {
       const isSel = sel === f.id;
       const zt = t.zones[f.zone];
-      const tip = `<strong>${esc(f.name)}</strong><span>${esc(f.kind)} · ${zt.status === 'normal' ? 'Supply normal' : 'Zone pressure below normal'}</span>`;
+      const tip = `<strong>${esc(f.name)}</strong><span>${esc(f.kind)} · ${zt.status === 'normal' ? 'Supply normal' : 'Pressure below normal'}</span>`;
       keyed(
         I,
         `f:${f.id}`,
@@ -474,20 +471,20 @@ const zoneAffected = (s, z) => !!s.zoneIssues[z] || s.tele.zones[z].status !== '
 function drawNetwork(I) {
   // Fictional schematic links drawn before the network loaded are replaced.
   I.pipes.forEach((l, k) => {
-    if (k !== 'PL-R1' && k !== 'PL-M1') (I.groups.pipes.removeLayer(l), I.pipes.delete(k));
+    if (!MAP.pipelines.some((pl) => pl.id === k)) (I.groups.pipes.removeLayer(l), I.pipes.delete(k));
   });
   const renderer = L.canvas({ padding: 0.4, tolerance: 6 });
   const s = getState();
   I.net = [];
   // distribution first so mains render on top
   [...network.lines].sort((a, b) => (a.k === b.k ? 0 : a.k === 'd' ? -1 : 1)).forEach((ln) => {
-    const z = zoneById(ln.z);
+    const z = zoneById(ln.z) || { name: 'Service area' };
     const line = L.polyline(ln.c, { renderer, interactive: true });
     line.bindTooltip(
       () => `<strong>${esc(ln.n || 'Unnamed street')}</strong><span>${ln.k === 'm' ? 'Transmission main' : 'Distribution line'} · ${esc(z.name)}${zoneAffected(getState(), ln.z) ? ' · Pressure below normal' : ''}</span><em>Illustrative routing along OSM roads</em>`,
       { ...tipOpts, sticky: true, offset: [0, -8] }
     );
-    line.on('click', () => (PIPE_ASSET[ln.z] && ln.k === 'd' ? select(I, 'asset', PIPE_ASSET[ln.z]) : select(I, 'zone', ln.z)));
+    line.on('click', () => select(I, 'zone', ln.z));
     line._ln = ln;
     I.groups.pipes.addLayer(line);
     I.net.push(line);

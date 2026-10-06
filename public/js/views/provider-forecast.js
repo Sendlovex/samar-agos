@@ -89,7 +89,7 @@ function weatherEffects() {
 
 function weatherCard() {
   const { data, status } = weatherState();
-  if (status === 'loading' && !data) return card('Weather & climate outlook', '<p class="muted">Loading the weather forecast for Catbalogan City…</p>', { actions: src('FORECAST') });
+  if (status === 'loading' && !data) return card('Weather & climate outlook', '<div class="skel" role="status"><span></span><span></span><span></span><span class="sr-only">Loading the weather forecast</span></div>', { actions: src('FORECAST') });
   if (!data) return card('Weather & climate outlook', empty('Weather forecast unavailable', 'The shortage forecast is running without weather adjustments. It will retry automatically.', 'cloud'), { actions: src('FORECAST') });
   const c = data.current;
   const now = wxDescribe(c.weather_code);
@@ -170,7 +170,7 @@ function forecastMain() {
     )}
   </div>
   ${weatherCard()}
-  ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Central Reservoir level · past 24 h (simulated telemetry) and next 48 h (forecast)${S.forecastBand() ? ' · shaded area shows the likely range from past forecast errors' : ''}` })}
+  ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Poblacion 13 reservoir level · past 24 h (simulated telemetry) and next 48 h (forecast)${S.forecastBand() ? ' · shaded area shows the likely range from past forecast errors' : ''}` })}
   ${accuracyCard()}
   ${card(
     'Forecast inputs',
@@ -262,10 +262,10 @@ let simInc = null;
 let simLabel = 'Custom response';
 
 const CONTROLS = [
-  { k: 'prodDelta', label: 'Increase production', unit: 'ML/day', min: 0, max: 1, step: 0.05, desc: 'Additional treated-water output from existing sources.' },
-  { k: 'emergencyL', label: 'Add emergency stored water', unit: 'L', min: 0, max: 800000, step: 10000, desc: 'Backup storage released into the system.' },
+  { k: 'prodDelta', label: 'Increase production', unit: 'ML/day', min: 0, max: 3, step: 0.1, desc: 'Additional treated-water output from existing sources.' },
+  { k: 'emergencyL', label: 'Add tanker water', unit: 'L', min: 0, max: 200000, step: 5000, desc: 'Water delivered by tankers into the system.' },
   { k: 'reducePct', label: 'Reduce distribution', unit: '%', min: 0, max: 30, step: 1, desc: 'Pressure management or scheduled supply rotation.' },
-  { k: 'inflowPct', label: 'Change raw-water inflow', unit: '%', min: -50, max: 30, step: 1, desc: 'Change in river intake inflow.' },
+  { k: 'inflowPct', label: 'Change raw-water inflow', unit: '%', min: -50, max: 30, step: 1, desc: 'Change in spring and Antiao River yield.' },
   { k: 'demandPct', label: 'Change expected demand', unit: '%', min: -30, max: 40, step: 1, desc: 'Test higher or lower demand assumptions.' },
 ];
 
@@ -336,14 +336,14 @@ function baseline() {
 
 function controlsHtml() {
   const s = st();
-  const pumpDown = s.pumpsOffline.includes('PS-01');
+  const pumpDown = s.pumpsOffline.some((id) => id.startsWith('PS-CAR'));
   return `<div class="ctl-list">
     ${CONTROLS.map(
       (c) => `<div class="ctl"><div class="ctl-h"><label for="sim-${c.k}">${c.label}</label><span class="ctl-v"><input type="number" id="sim-${c.k}-n" aria-label="${c.label} value" value="${sim[c.k]}" min="${c.min}" max="${c.max}" step="${c.step}" data-input="sim" data-k="${c.k}"/><em>${c.unit}</em></span></div>
       <input type="range" id="sim-${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${sim[c.k]}" data-input="sim" data-k="${c.k}"/><p>${c.desc}</p></div>`
     ).join('')}
-    <label class="switch ctl-sw"><input type="checkbox" ${sim.backup ? 'checked' : ''} data-change="sim-bool" data-k="backup"/><span class="switch-t" aria-hidden="true"></span><span><strong>Activate backup source</strong><em>Standby Deep Well No. 3 (+0.5 ML/day, hypothetical)</em></span></label>
-    <label class="switch ctl-sw ${pumpDown ? '' : 'is-dis'}"><input type="checkbox" ${sim.restorePumps ? 'checked' : ''} ${pumpDown ? '' : 'disabled'} data-change="sim-bool" data-k="restorePumps"/><span class="switch-t" aria-hidden="true"></span><span><strong>Restore failed pump</strong><em>${pumpDown ? 'PS-01 back to full capacity' : 'No pump is currently offline'}</em></span></label>
+    <label class="switch ctl-sw"><input type="checkbox" ${sim.backup ? 'checked' : ''} data-change="sim-bool" data-k="backup"/><span class="switch-t" aria-hidden="true"></span><span><strong>Activate standby well</strong><em>Piczonville deep well (+6.5 L/s ≈ 0.56 ML/day; on standby due to salinity, CWD WSP 2017)</em></span></label>
+    <label class="switch ctl-sw ${pumpDown ? '' : 'is-dis'}"><input type="checkbox" ${sim.restorePumps ? 'checked' : ''} ${pumpDown ? '' : 'disabled'} data-change="sim-bool" data-k="restorePumps"/><span class="switch-t" aria-hidden="true"></span><span><strong>Restore Caramayon pumps</strong><em>${pumpDown ? 'Caramayon pumping stations back online (+91 L/s)' : 'No pump is currently offline'}</em></span></label>
   </div>`;
 }
 
@@ -411,14 +411,14 @@ register({
     refreshResults();
   },
   'sim-preset': (el) => {
-    const pumpDown = st().pumpsOffline.includes('PS-01');
+    const pumpDown = st().pumpsOffline.some((id) => id.startsWith('PS-CAR'));
     const p = el.dataset.p;
     sim = { ...SIM0 };
-    if (p === 'emergency') (sim.emergencyL = 400000), (simLabel = 'Activate Emergency Water');
+    if (p === 'emergency') (sim.emergencyL = 100000), (simLabel = 'Activate Emergency Water');
     if (p === 'pump') (sim.restorePumps = pumpDown), (simLabel = 'Restore Failed Pump');
     if (p === 'demand') (sim.reducePct = 15), (simLabel = 'Demand Management');
-    if (p === 'combined') Object.assign(sim, { emergencyL: 400000, reducePct: 10, backup: true, restorePumps: pumpDown }), (simLabel = 'Combined Response');
-    if (p === 'pump' && !pumpDown) S.toast('No pump is currently offline — apply the "Pump Failure" demo scenario to test this', 'info');
+    if (p === 'combined') Object.assign(sim, { emergencyL: 100000, reducePct: 10, backup: true, restorePumps: pumpDown }), (simLabel = 'Combined Response');
+    if (p === 'pump' && !pumpDown) S.toast('No pump is currently offline — apply the "Caramayon Power Outage" demo scenario to test this', 'info');
     document.getElementById('sim-controls').innerHTML = controlsHtml();
     refreshResults();
   },

@@ -19,12 +19,11 @@ function zoneEvidence(zone) {
   const zt = s.tele.zones[zone];
   const lvl = s.tele.volML / S.RES_CAP_ML;
   const pressDelta = zt.pressure - z.basePressure;
-  const pumps = zone === 'B' ? s.tele.pumps['PS-03'] : null;
   return [
     { k: 'Pressure', v: zt.status === 'normal' ? 'Within normal range' : 'Below normal', d: `${fmt(zt.pressure, 0)} PSI vs ~${z.basePressure} PSI normal (${fmt(pressDelta, 0)} PSI)`, sev: zt.status, src: 'SIMULATED' },
     { k: 'Flow', v: Math.abs(zt.flowDeltaPct) < 8 ? 'As expected' : zt.flowDeltaPct < 0 ? `Down ${fmt(-zt.flowDeltaPct, 0)}%` : `Up ${fmt(zt.flowDeltaPct, 0)}%`, d: `${fmt(zt.flow, 1)} L/s at zone inlet`, sev: Math.abs(zt.flowDeltaPct) < 8 ? 'normal' : 'warning', src: 'SIMULATED' },
-    { k: 'Storage', v: lvl > 0.42 ? 'Stable' : 'Low', d: `Central Reservoir ${Math.round(lvl * 100)}%`, sev: lvl > 0.42 ? 'normal' : lvl > 0.3 ? 'warning' : 'critical', src: 'SIMULATED' },
-    { k: 'Equipment', v: s.pumpsOffline.length ? `${s.pumpsOffline.join(', ')} offline` : 'No equipment alarms', d: pumps ? `PS-03 booster ${pumps.status}, ${fmt(pumps.flowLs, 1)} L/s` : 'Pumps and valves reporting normally', sev: s.pumpsOffline.length ? 'critical' : 'normal', src: 'SIMULATED' },
+    { k: 'Storage', v: lvl > 0.42 ? 'Stable' : 'Low', d: `Poblacion 13 reservoir ${Math.round(lvl * 100)}%`, sev: lvl > 0.42 ? 'normal' : lvl > S.MIN_RESERVE ? 'warning' : 'critical', src: 'SIMULATED' },
+    { k: 'Equipment', v: s.pumpsOffline.length ? `${s.pumpsOffline.join(', ')} offline` : 'No equipment alarms', d: s.pumpsOffline.length ? 'Supply reduced while pumps are down' : 'Pumps reporting normally', sev: s.pumpsOffline.length ? 'critical' : 'normal', src: 'SIMULATED' },
   ];
 }
 
@@ -112,7 +111,7 @@ function wsReports() {
     <div class="ib-sec-h"><h3>Reports in this cluster</h3><span class="muted sm">${rows.length} total · newest first</span></div>
     <div class="ib-tbl">${table(
       [
-        { label: 'Report', render: (r) => `<span class="mono">${r.id}</span>${r.mine ? '<div class="it-s">Demo resident</div>' : ''}` },
+        { label: 'Report', render: (r) => `<span class="mono">${r.id}</span>${r.simulated ? '<div class="it-s">Simulated (demo)</div>' : r.mine ? '<div class="it-s">Your report</div>' : ''}` },
         { label: 'Problem', render: (r) => esc(reportTypeLabel(r.type)) },
         { label: 'Location', render: (r) => `<span class="ib-loc">${esc(r.location)}</span>` },
         { label: 'Submitted', render: (r) => `<span class="nowrap">${fmtTime(r.submittedAt)}</span><div class="it-s">${relTime(r.submittedAt)}</div>` },
@@ -141,7 +140,7 @@ const incidents = {
     if (inboxTab === 'inbox')
       return `${head}<div class="ib">
         <section class="card ib-side">
-          <header class="card-h"><div><h2 class="card-t">Report clusters</h2><p class="card-sub">Unreviewed reports grouped by zone</p></div><div class="ib-total"><strong>${unrev}</strong><span>${clusters.length} zone${clusters.length === 1 ? '' : 's'}</span></div></header>
+          <header class="card-h"><div><h2 class="card-t">Report clusters</h2><p class="card-sub">Unreviewed reports grouped by bone</p></div><div class="ib-total"><strong>${unrev}</strong><span>${clusters.length} zone${clusters.length === 1 ? '' : 's'}</span></div></header>
           <div class="card-b ib-side-b" data-region="list">${R.list()}</div>
           <div class="ib-steps"><div class="ib-steps-h">How to triage</div><ol><li>Select a cluster</li><li>Compare reports with system readings</li><li>Create an incident or link to an open one</li></ol></div>
         </section>
@@ -191,12 +190,12 @@ register({
           ${field('Title', `<input name="title" id="inc-title" value="${esc(title)}"/>`, { id: 'inc-title', req: true })}
           ${field('Type', `<select name="type" id="inc-type">${['Low Pressure', 'Leak', 'Supply Interruption', 'Water Quality', 'Equipment'].map((t) => `<option ${t === (main === 'leak' ? 'Leak' : main === 'no_water' ? 'Supply Interruption' : 'Low Pressure') ? 'selected' : ''}>${t}</option>`).join('')}</select>`, { id: 'inc-type', req: true })}
           ${field('Severity', `<select name="severity" id="inc-sev">${['Critical', 'High', 'Medium', 'Low'].map((t) => `<option ${t === suggestedSev ? 'selected' : ''}>${t}</option>`).join('')}</select>`, { id: 'inc-sev', req: true, hint: `Suggested from evidence: ${suggestedSev}. Operator decides.` })}
-          ${field('Affected zone', `<input id="inc-zone" value="${esc(z.name)}" disabled/>`, { id: 'inc-zone' })}
+          ${field('Affected barangay', `<input id="inc-zone" value="${esc(z.name)}" disabled/>`, { id: 'inc-zone' })}
         </div>
         <div class="field"><span class="field-l">Evidence reviewed <span class="req">*</span></span><p class="field-h">Confirm which operational evidence supports this incident. Report count alone is not sufficient.</p>
           <div class="stack-sm">${ev.map((e) => `<label class="chk"><input type="checkbox" name="evidence" data-multi="1" value="${e.k}" ${e.sev !== 'normal' ? 'checked' : ''}/> ${e.k}: ${esc(e.v)} <span class="muted">(${esc(e.d)})</span></label>`).join('')}
           <label class="chk"><input type="checkbox" name="evidence" data-multi="1" value="Resident reports" checked/> Resident reports: ${c.reports.length} in ${esc(z.short)}</label></div></div>
-        ${field('Operator note', '<textarea name="note" id="inc-note" rows="2" placeholder="e.g. Pressure drop matches report cluster along line B2."></textarea>', { id: 'inc-note', optional: true })}
+        ${field('Operator note', '<textarea name="note" id="inc-note" rows="2" placeholder="e.g. Pressure drop matches the report cluster."></textarea>', { id: 'inc-note', optional: true })}
       </form>`,
       { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="inc-create" data-zone="${c.zone}">${icon('alert', 15)} Create incident</button>` }
     );
@@ -290,7 +289,7 @@ const incidentDetail = {
             <div class="evg-i"><div class="evg-h">${icon('users', 16)} Resident reports ${src('RESIDENT REPORTED')}</div><div class="evg-v">${reps.length}</div><div class="evg-d">${br.map((b) => `${b.n} ${esc(b.label)}`).join(' · ') || 'No reports linked'}</div></div>
             <div class="evg-i"><div class="evg-h">${icon('gauge', 16)} Pressure readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].pressure, 0)} <small>PSI</small></div><div class="evg-d">Normal ~${z.basePressure} PSI ${src('SIMULATED')}</div></div>
             <div class="evg-i"><div class="evg-h">${icon('activity', 16)} Flow readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].flow, 1)} <small>L/s</small></div><div class="evg-d">${s.tele.zones[i.zone].flowDeltaPct >= 0 ? '+' : ''}${fmt(s.tele.zones[i.zone].flowDeltaPct, 0)}% vs expected ${src('SIMULATED')}</div></div>
-            <div class="evg-i"><div class="evg-h">${icon('zap', 16)} Equipment & zone alerts</div><div class="evg-v">${equipAlerts.length}</div><div class="evg-d">${equipAlerts.map((a) => esc(a.title)).join('; ') || 'None'}</div></div>
+            <div class="evg-i"><div class="evg-h">${icon('zap', 16)} Equipment & area alerts</div><div class="evg-v">${equipAlerts.length}</div><div class="evg-d">${equipAlerts.map((a) => esc(a.title)).join('; ') || 'None'}</div></div>
           </div>
           <div data-region="cond">${incCondition(i)}</div>
           ${i.evidence?.length ? `<p class="sm muted">Evidence confirmed by operator at creation: ${i.evidence.map(esc).join(', ')}</p>` : ''}
@@ -369,7 +368,7 @@ register({
       `Resolve ${i.id}`,
       `${openWo.length ? alertBanner('warning', `${openWo.length} work order${openWo.length > 1 ? 's are' : ' is'} not completed`, openWo.map((w) => w.id).join(', ')) : ''}
       ${zt.status !== 'normal' ? alertBanner('warning', 'Readings have not recovered', `${zoneById(i.zone).short} pressure is ${fmt(zt.pressure, 0)} PSI. Resolving now may be premature.`) : alertBanner('normal', 'Operational readings have recovered', `${zoneById(i.zone).short} pressure ${fmt(zt.pressure, 0)} PSI.`)}
-      <form class="form" id="res-form">${field('Resolution notes', `<textarea id="res-notes" rows="3" placeholder="e.g. Replaced failed coupling on line B2. Pressure restored to 38 PSI."></textarea>`, { id: 'res-notes', req: true })}</form>
+      <form class="form" id="res-form">${field('Resolution notes', `<textarea id="res-notes" rows="3" placeholder="e.g. Replaced the failed coupling. Pressure restored to normal."></textarea>`, { id: 'res-notes', req: true })}</form>
       <p class="fine">Resolving will close linked advisories, notify residents that service is restored, and ask reporting residents to confirm whether water service has returned.</p>`,
       { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--success" data-action="inc-resolve-do" data-id="${i.id}">${icon('check-circle', 15)} Resolve & notify residents</button>` }
     );
@@ -398,16 +397,17 @@ function woProgress(w) {
 function maintTable(rows) {
   const day = 864e5;
   const when = (r) => {
+    if (!r.nextMaint) return '<span class="muted">Not scheduled</span>';
     const d = Math.round(Math.abs(r.due) / day);
     if (r.due < 0) return `<div class="wo-due is-late"><span>${fmtDate(r.nextMaint)}</span><small>${icon('alert', 12)} Overdue ${d || 1}d</small></div>`;
     return `<div class="wo-due ${r.due < 14 * day ? 'is-soon' : ''}"><span>${fmtDate(r.nextMaint)}</span><small>${d ? `in ${d}d` : 'today'}</small></div>`;
   };
-  const state = (r) => `<span class="mt-state"><span class="sys-dot sys-dot--${r.due < 0 ? 'warn' : r.due < 14 * day ? 'info' : 'ok'}" aria-hidden="true"></span>${r.due < 0 ? 'Overdue' : r.due < 14 * day ? 'Due soon' : 'Scheduled'}</span>`;
+  const state = (r) => (!r.nextMaint ? '<span class="muted">No schedule</span>' : `<span class="mt-state"><span class="sys-dot sys-dot--${r.due < 0 ? 'warn' : r.due < 14 * day ? 'info' : 'ok'}" aria-hidden="true"></span>${r.due < 0 ? 'Overdue' : r.due < 14 * day ? 'Due soon' : 'Scheduled'}</span>`);
   return `<div class="card wo-list">${table(
     [
       { label: 'Asset', render: (r) => `<div class="wo-id"><strong class="mono">${r.id}</strong><span>${esc(r.type)}</span></div>` },
       { label: 'Name', render: (r) => `<div class="wo-task">${esc(r.name)}</div>` },
-      { label: 'Last serviced', render: (r) => `<span class="muted">${fmtDate(r.lastMaint)}</span>` },
+      { label: 'Last serviced', render: (r) => `<span class="muted">${r.lastMaint ? fmtDate(r.lastMaint) : 'Not recorded'}</span>` },
       { label: 'Next due', render: when },
       { label: 'State', render: state },
       { label: 'Work order', render: (r) => (r.wo ? `<a class="mono" href="#/p/work-orders/${r.wo.id}">${r.wo.id}</a> <span class="muted sm">${r.wo.status}</span>` : `<button class="btn btn--outline btn--xs" data-action="wo-new" data-asset="${r.id}" data-pri="Low" data-desc="Scheduled preventive maintenance for ${esc(r.name)}.">${icon('plus', 13)} Schedule</button>`) },
@@ -440,7 +440,7 @@ const workOrders = {
     const urgent = open.filter((w) => w.priority === 'High' || w.priority === 'Critical');
     // Preventive maintenance schedule (formerly its own page): assets by next due date.
     const maint = s.assets
-      .map((a) => ({ ...a, due: a.nextMaint - now, wo: all.find((w) => w.assetId === a.id && w.status !== 'Completed') }))
+      .map((a) => ({ ...a, due: a.nextMaint ? a.nextMaint - now : Infinity, wo: all.find((w) => w.assetId === a.id && w.status !== 'Completed') }))
       .sort((a, b) => a.due - b.due);
     const maintLate = maint.filter((r) => r.due < 0);
     const maintSoon = maint.filter((r) => r.due >= 0 && r.due < 14 * 864e5);
@@ -536,7 +536,7 @@ const workOrderDetail = {
           ${card(
             'Technician notes',
             `${w.notes.length ? `<ul class="notes">${w.notes.map((n) => `<li><div class="notes-h"><strong>${esc(n.by)}</strong><time>${fmtDateTime(n.at)}</time></div><p>${esc(n.text)}</p></li>`).join('')}</ul>` : '<p class="muted sm">No technician notes yet.</p>'}
-            ${w.status !== 'Completed' ? `<div class="note-add"><label class="sr-only" for="wo-note-in">Add technician note</label><input id="wo-note-in" placeholder="e.g. Crew on site, isolating section valve VLV-07"/><button class="btn btn--outline btn--sm" data-action="wo-note" data-id="${w.id}">Add note</button></div>` : ''}`
+            ${w.status !== 'Completed' ? `<div class="note-add"><label class="sr-only" for="wo-note-in">Add technician note</label><input id="wo-note-in" placeholder="e.g. Crew on site, isolating the section valve"/><button class="btn btn--outline btn--sm" data-action="wo-note" data-id="${w.id}">Add note</button></div>` : ''}`
           )}
         </div>
         <div class="inc-side">
@@ -572,8 +572,8 @@ register({
     openModal(
       `Complete ${w.id}`,
       `<form class="form" id="woc-form">
-        ${field('Repair notes', `<textarea name="notes" id="woc-notes" rows="3" placeholder="What was found and repaired?">${w.incidentId ? 'Located failed joint on distribution line. Replaced coupling and flushed line.' : ''}</textarea>`, { id: 'woc-notes', req: true })}
-        ${field('Verification reading', `<input name="reading" id="woc-reading" value="${zt ? `Pressure test at ${esc(asset.name)}: ${Math.round(zoneById(asset.zone).basePressure - 1)} PSI` : ''}"/>`, { id: 'woc-reading', req: true, hint: 'Manual reading taken by the crew after repair (recorded as MANUAL).' })}
+        ${field('Repair notes', `<textarea name="notes" id="woc-notes" rows="3" placeholder="What was found and repaired?"></textarea>`, { id: 'woc-notes', req: true })}
+        ${field('Verification reading', `<input name="reading" id="woc-reading" placeholder="e.g. Pressure test after repair: 40 PSI"/>`, { id: 'woc-reading', req: true, hint: 'Manual reading taken by the crew after repair (recorded as MANUAL).' })}
         ${field('Completion time', `<input type="datetime-local" name="at" id="woc-at" value="${toLocalInput(Date.now())}"/>`, { id: 'woc-at', req: true })}
         ${!w.photos.after ? '<p class="fine">Tip: attach an after photo as repair evidence from the work order page.</p>' : ''}
       </form>`,

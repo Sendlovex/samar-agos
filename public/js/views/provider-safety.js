@@ -5,13 +5,14 @@ import { icon, src, card, register, SEV } from '../ui.js';
 import { lineChart } from '../charts.js';
 import { esc, fmt, fmtTime, relTime } from '../util.js';
 import { openAdvisoryModal } from './provider-shared.js';
+import { isDemoMode } from '../app.js';
 
 const dot = (sev) => `<span class="sys-dot sys-dot--${SEV[sev]?.cls || 'off'}" aria-hidden="true"></span>`;
 const val = (p, v = p.value) => (v == null ? '—' : `${fmt(v, p.d ?? 1)}${p.unit ? ` ${p.unit}` : ''}`);
 const VERDICT = {
-  safe: { label: 'Safe to drink', text: 'All readings are within drinking-water limits at every monitoring point.' },
+  safe: { label: 'Safe to use', text: 'All readings are within drinking-water limits at every monitoring point.' },
   caution: { label: 'Needs attention', text: 'Health limits are met, but an operational reading is outside its normal range.' },
-  unsafe: { label: 'Not safe to drink', text: 'Readings exceed drinking-water limits. Hold or treat water before it reaches residents.' },
+  unsafe: { label: 'Not safe to use', text: 'Readings exceed drinking-water limits. Hold or treat water before it reaches residents.' },
 };
 const SEV_OF = { safe: 'normal', caution: 'warning', unsafe: 'critical' };
 const MARK = { normal: '#1E3A5F', warning: '#D97706', critical: '#C0262D', offline: '#9AA6B4' };
@@ -77,8 +78,8 @@ function journey(ws) {
     <path d="M10 208 q 12 -6 24 0 t 24 0 M70 216 q 12 -6 24 0 t 24 0 M130 207 q 12 -6 24 0 t 24 0" fill="none" stroke="#9CC3E6" stroke-width="1.6" stroke-linecap="round"/>
     <rect x="186" y="178" width="34" height="30" rx="3" fill="#fff" stroke="#7690B0" stroke-width="1.6"/>
     <path d="M182 180 l21 -12 21 12" fill="none" stroke="#7690B0" stroke-width="1.6"/>
-    <text x="100" y="250" text-anchor="middle" class="ws-svg-t">Water source</text>
-    <text x="100" y="266" text-anchor="middle" class="ws-svg-s">Antiao River intake</text>
+    <text x="100" y="250" text-anchor="middle" class="ws-svg-t">Water sources</text>
+    <text x="100" y="266" text-anchor="middle" class="ws-svg-s">Springs + Antiao River</text>
     <!-- main pipe with flowing water -->
     <line x1="220" y1="204" x2="1000" y2="204" stroke="#C9D4E2" stroke-width="9" stroke-linecap="round"/>
     <line x1="220" y1="204" x2="1000" y2="204" stroke="${flow}" stroke-width="3" stroke-dasharray="8 12" stroke-linecap="round" class="ws-flow"/>
@@ -89,20 +90,20 @@ function journey(ws) {
     <path d="M300 172 q 9.5 -4 19 0 t 19 0" fill="none" stroke="${flow}" stroke-width="1.4"/>
     <rect x="352" y="160" width="38" height="28" rx="3" fill="#EEF2F7" stroke="#9FB2CA"/>
     <path d="M352 172 q 9.5 -4 19 0 t 19 0" fill="none" stroke="${flow}" stroke-width="1.4"/>
-    <text x="345" y="250" text-anchor="middle" class="ws-svg-t">Treatment plant</text>
+    <text x="345" y="250" text-anchor="middle" class="ws-svg-t">Kulador plant</text>
     <text x="345" y="266" text-anchor="middle" class="ws-svg-s">Filtration + chlorination</text>
     <!-- reservoir -->
     <path d="M560 112 v84 a55 12 0 0 0 110 0 v-84" fill="#fff" stroke="#7690B0" stroke-width="1.6"/>
     <path d="M560 146 a55 12 0 0 0 110 0 v50 a55 12 0 0 1 -110 0 z" fill="url(#wsRes)" opacity="0.9"/>
     <ellipse cx="615" cy="112" rx="55" ry="12" fill="#F4F7FB" stroke="#7690B0" stroke-width="1.6"/>
-    <text x="615" y="250" text-anchor="middle" class="ws-svg-t">Central Reservoir</text>
-    <text x="615" y="266" text-anchor="middle" class="ws-svg-s">2.0 ML storage</text>
+    <text x="615" y="250" text-anchor="middle" class="ws-svg-t">Poblacion 13 reservoir</text>
+    <text x="615" y="266" text-anchor="middle" class="ws-svg-s">440 m³ storage</text>
     <!-- homes -->
     ${[960, 1010, 1060]
       .map((x, i) => `<g transform="translate(${x} ${i === 1 ? 150 : 160})"><path d="M-20 22 l20 -18 20 18" fill="none" stroke="#7690B0" stroke-width="1.6" stroke-linejoin="round"/><rect x="-15" y="21" width="30" height="${i === 1 ? 34 : 24}" fill="#fff" stroke="#7690B0" stroke-width="1.6"/><rect x="-4" y="${i === 1 ? 41 : 31}" width="8" height="${i === 1 ? 14 : 14}" fill="#EEF2F7" stroke="#9FB2CA"/></g>`)
       .join('')}
     <text x="1010" y="250" text-anchor="middle" class="ws-svg-t">Homes</text>
-    <text x="1010" y="266" text-anchor="middle" class="ws-svg-s">Zones A – E</text>
+    <text x="1010" y="266" text-anchor="middle" class="ws-svg-s">26 barangays</text>
     ${nodes.map(node).join('')}
   </svg>`;
 }
@@ -138,7 +139,6 @@ function rangeBar(p) {
 function verdictStrip(ws) {
   const v = VERDICT[ws.verdict];
   return `<section class="ws-verdict ws-verdict--${ws.verdict}">
-    <span class="ws-v-ic">${icon(ws.verdict === 'safe' ? 'shield' : 'alert', 26)}</span>
     <div class="ws-v-t"><span class="kpi-label">Water potability</span><strong>${v.label}</strong><span>${v.text}</span></div>
     <div class="ws-v-n">
       <div><strong>${ws.stations.length}</strong><span>${ico('sensor', 15)} IoT sensors</span></div>
@@ -294,10 +294,9 @@ function main() {
 function demoPanel() {
   const mode = S.waterSafety().mode;
   return `<aside class="ws-demo" aria-label="Water quality demo">
-    <div class="ws-demo-h">${icon('play', 13)}<span>Demo · water quality</span></div>
     <div class="ws-demo-b">
-      <button class="${mode === 'safe' ? 'is-on' : ''}" data-action="ws-demo" data-mode="safe" aria-pressed="${mode === 'safe'}">${icon('check-circle', 15)} Safe</button>
-      <button class="${mode === 'unsafe' ? 'is-on is-bad' : ''}" data-action="ws-demo" data-mode="unsafe" aria-pressed="${mode === 'unsafe'}">${icon('alert', 15)} Not safe</button>
+      <button class="${mode === 'safe' ? 'is-on' : ''}" data-action="ws-demo" data-mode="safe" aria-pressed="${mode === 'safe'}">Safe</button>
+      <button class="${mode === 'unsafe' ? 'is-on is-bad' : ''}" data-action="ws-demo" data-mode="unsafe" aria-pressed="${mode === 'unsafe'}">Not safe</button>
     </div>
   </aside>`;
 }
@@ -319,7 +318,7 @@ register({
   'ws-station': (el) => ((selStation = el.dataset.id), rerender()),
   'ws-boil': () =>
     openAdvisoryModal({
-      title: 'Boil-Water Advisory — All Zones',
+      title: 'Boil-Water Advisory — All Served Barangays',
       areas: ZONES.map((z) => z.id),
       serviceStatus: 'QUALITY ADVISORY',
       message: 'Water quality tests found readings outside drinking-water limits. Boil water for at least one minute before drinking or cooking until further notice.',
@@ -332,7 +331,7 @@ const waterSafety = {
   regions: { main },
   render() {
     return `<div class="page-h"><div><h1>Water Safety</h1><p class="page-sub">Potability checks before water reaches residents — pH, turbidity, chlorine, temperature and dissolved solids.</p></div></div>
-      <div id="ws-top">${top()}</div><div data-region="main">${main()}</div>${demoPanel()}`;
+      <div id="ws-top">${top()}</div><div data-region="main">${main()}</div>${isDemoMode() ? demoPanel() : ''}`;
   },
 };
 
