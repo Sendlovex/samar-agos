@@ -1,6 +1,6 @@
 // Shared provider components: work-order modal, advisory publishing, map side panels.
 import * as S from '../store.js';
-import { ZONES, zoneById, TEAMS, CRITICAL_FACILITIES, reportTypeLabel, REPORT_TYPES } from '../data.js';
+import { ZONES, SERVICE_ZONES, zoneById, TEAMS, CRITICAL_FACILITIES, reportTypeLabel, REPORT_TYPES } from '../data.js';
 import { icon, status, src, field, table, openModal, openDrawer, closeOverlay, register, registerInputs, formData, updatedAgo, priorityBadge, sevBadge, SEV, busy } from '../ui.js';
 import { gaugeBar } from '../charts.js';
 import { assetLiveStatus } from '../map.js';
@@ -70,17 +70,27 @@ export function openWorkOrderModal(prefill = {}) {
         ${field('Asset', `<select name="assetId" id="wo-asset">${s.assets.map((a) => `<option value="${a.id}" ${a.id === defAsset ? 'selected' : ''}>${a.id} — ${esc(a.name)}</option>`).join('')}</select>`, { id: 'wo-asset', req: true })}
         ${field('Location', `<input name="location" id="wo-loc" value="${esc(prefill.location || (inc ? `${zoneById(inc.zone).name} — ${zoneById(inc.zone).barangays.join(', ')}` : ''))}" required/>`, { id: 'wo-loc', req: true })}
         ${field('Priority', `<select name="priority" id="wo-pri">${['Critical', 'High', 'Medium', 'Low'].map((p) => `<option ${p === (prefill.priority || (inc?.severity === 'High' ? 'High' : 'Medium')) ? 'selected' : ''}>${p}</option>`).join('')}</select>`, { id: 'wo-pri', req: true })}
-        ${field('Assigned team', `<input name="team" id="wo-team" list="wo-teams" value="${esc(prefill.team || '')}" placeholder="Crew or team name"/><datalist id="wo-teams">${[...new Set(s.workOrders.map((w) => w.team).filter(Boolean))].map((t) => `<option value="${esc(t)}"></option>`).join('')}</datalist>`, { id: 'wo-team', optional: true })}
+        ${field('Assign to', `<select name="responder" id="wo-resp"><option value="">Not assigned yet</option>${S.responders().map((r) => `<option value="${esc(r.loginEmail)}">${esc(r.name)}</option>`).join('')}</select>`, { id: 'wo-resp', optional: true, hint: S.responders().length ? 'The responder sees this job on their dashboard.' : 'Add responders under Work Orders first.' })}
         ${field('Target completion', `<input type="datetime-local" name="target" id="wo-target" value="${target}"/>`, { id: 'wo-target', req: true })}
       </div>
       ${field('Description', `<textarea name="description" id="wo-desc" rows="3">${esc(desc)}</textarea>`, { id: 'wo-desc', req: true })}
     </form>`,
-    { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="wo-create" data-inc="${inc?.id || ''}">${icon('wrench', 16)} Create & assign</button>` }
+    { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="wo-create" data-inc="${inc?.id || ''}">Create and Assign</button>` }
   );
 }
 
 // ---------------------------------------------------------------- advisory modal with live preview
 const STATUS_OPTS = ['REDUCED PRESSURE', 'NO WATER', 'INTERMITTENT SUPPLY', 'QUALITY ADVISORY', 'SCHEDULED MAINTENANCE', 'SUPPLY WARNING'];
+// Default resident instructions per service status; replaced when the status changes unless edited.
+const STATUS_INSTRUCTIONS = {
+  'REDUCED PRESSURE': 'Water may flow weakly, especially on upper floors and at peak hours. Store some water for your daily needs. Report no water at all through SAMAR-AGOS.',
+  'NO WATER': 'Use stored water for your daily needs. Get water from the nearest distribution point listed in SAMAR-AGOS. Keep taps closed to avoid flooding when supply returns.',
+  'INTERMITTENT SUPPLY': 'Water will come and go. Fill containers whenever water is available and store it covered. Check SAMAR-AGOS for the next update.',
+  'QUALITY ADVISORY': 'Limit the use of tap water. Use it for flushing and cleaning, and boil it for at least one minute before cooking. Report unusual color or smell through SAMAR-AGOS.',
+  'SCHEDULED MAINTENANCE': 'Store enough water for your daily needs before the start time. Keep taps closed during the work. Water may look cloudy for a few minutes when supply returns; let it run until clear.',
+  'SUPPLY WARNING': 'Use water wisely and store some for your daily needs. Check SAMAR-AGOS for water distribution points if needed. Report new leaks through SAMAR-AGOS.',
+};
+const isDefaultInstr = (t) => !t.trim() || Object.values(STATUS_INSTRUCTIONS).includes(t.trim());
 let advDraft = null;
 
 export function openAdvisoryModal(prefill = {}) {
@@ -99,62 +109,99 @@ export function openAdvisoryModal(prefill = {}) {
       (inc
         ? `Residents in Barangays ${z.barangays.join(', ').replace(/, ([^,]*)$/, ', and $1')} may experience ${isPressure ? 'reduced water pressure' : 'service disruption'} while crews investigate a distribution-line issue.${woAssigned ? ' Repair team assigned.' : ''}`
         : ''),
-    instructions: prefill.instructions || 'Store water for drinking and cooking. Check SAMAR-AGOS for water distribution point if needed. Report new leaks through SAMAR-AGOS.',
+    instructions: prefill.instructions || '',
     startAt: toLocalInput(Date.now()),
     etrKnown: false,
     etr: toLocalInput(Date.now() + 4 * 3600000),
     nextUpdate: toLocalInput(Date.now() + 2 * 3600000),
   };
+  if (!advDraft.instructions) advDraft.instructions = STATUS_INSTRUCTIONS[advDraft.serviceStatus] || '';
   openModal('Publish Service Advisory', advForm(), {
     wide: true,
-    footer: `<span class="muted sm mr-auto">${icon('users', 14)} Residents in the selected barangays are notified on publish.</span><button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="adv-publish">${icon('megaphone', 16)} Publish advisory</button>`,
+    onMount: (m) => m.classList.add('modal--adv'),
+    footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="adv-publish">Publish advisory</button>`,
   });
+}
+
+// Affected barangays grouped by service zone, with a select-all per zone.
+function advAreas() {
+  const d = advDraft;
+  const n = d.areas.length;
+  return `<div class="adv-areas-h"><span>${n ? `<strong>${n}</strong> barangay${n === 1 ? '' : 's'} selected` : 'No barangays selected'}</span>${n ? '<button type="button" class="linkish" data-action="adv-clear">Clear</button>' : ''}</div>
+    ${SERVICE_ZONES.map((g) => {
+      const ids = g.barangays;
+      const on = ids.filter((id) => d.areas.includes(id)).length;
+      const all = on === ids.length;
+      return `<div class="adv-zone">
+        <div class="adv-zone-h"><span><strong>${esc(g.name)}</strong> ${esc(g.area)}</span><button type="button" class="adv-zone-all ${all ? 'is-on' : ''}" data-action="adv-zone" data-id="${g.id}" aria-pressed="${all}">${all ? 'Clear zone' : `Select all ${ids.length}`}</button></div>
+        <div class="adv-chips">${ids
+          .map((id) => {
+            const z = zoneById(id);
+            return `<label class="adv-chip"><input type="checkbox" value="${id}" ${d.areas.includes(id) ? 'checked' : ''} data-change="adv-area"/><span>${esc(z.short)}</span></label>`;
+          })
+          .join('')}</div>
+      </div>`;
+    }).join('')}`;
 }
 
 function advForm() {
   const d = advDraft;
-  return `<div class="adv-edit"><form class="form" id="adv-form">
+  const sevOf = (o) => (o === 'NO WATER' ? 'crit' : o === 'QUALITY ADVISORY' || o === 'SCHEDULED MAINTENANCE' ? 'info' : 'warn');
+  return `<div class="adv-edit"><form class="form adv-form" id="adv-form" onsubmit="return false">
     ${d.incidentId ? `<div class="link-box">${icon('link', 15)} From incident <strong>${d.incidentId}</strong></div>` : ''}
-    ${field('Title', `<input id="adv-title" value="${esc(d.title)}" data-input="adv-f" data-k="title" required/>`, { id: 'adv-title', req: true })}
-    <div class="field"><span class="field-l">Affected areas <span class="req">*</span></span><div class="chips">${ZONES.map((z) => `<label class="chk-chip"><input type="checkbox" value="${z.id}" ${d.areas.includes(z.id) ? 'checked' : ''} data-change="adv-area"/> ${esc(z.name)}</label>`).join('')}</div></div>
-    ${field('Service status shown to residents', `<select id="adv-status" data-change="adv-f" data-k="serviceStatus">${STATUS_OPTS.map((o) => `<option ${o === d.serviceStatus ? 'selected' : ''}>${o}</option>`).join('')}</select>`, { id: 'adv-status', req: true })}
-    ${field('Message', `<textarea id="adv-msg" rows="3" data-input="adv-f" data-k="message">${esc(d.message)}</textarea>`, { id: 'adv-msg', req: true })}
-    <div class="grid-2">
-      ${field('Start time', `<input type="datetime-local" id="adv-start" value="${d.startAt}" data-input="adv-f" data-k="startAt"/>`, { id: 'adv-start', req: true })}
-      ${field('Next update time', `<input type="datetime-local" id="adv-next" value="${d.nextUpdate}" data-input="adv-f" data-k="nextUpdate"/>`, { id: 'adv-next', req: true })}
-    </div>
-    <label class="chk"><input type="checkbox" ${d.etrKnown ? 'checked' : ''} data-change="adv-etr-known"/> A reliable restoration estimate is available</label>
-    ${d.etrKnown ? field('Estimated restoration time', `<input type="datetime-local" id="adv-etr" value="${d.etr}" data-input="adv-f" data-k="etr"/>`, { id: 'adv-etr', optional: true, hint: 'Only enter if confident. Residents will see this as an estimate.' }) : '<p class="field-h">Restoration time is optional. If unknown, residents see the next update time instead.</p>'}
-    ${field('Instructions for residents', `<textarea id="adv-ins" rows="2" data-input="adv-f" data-k="instructions">${esc(d.instructions)}</textarea>`, { id: 'adv-ins', optional: true })}
+    <section class="adv-sec"><h3 class="adv-sec-t"><span>1</span>What is happening</h3>
+      ${field('Title', `<input id="adv-title" value="${esc(d.title)}" data-input="adv-f" data-k="title" placeholder="e.g. Low water pressure in Maulong" required/>`, { id: 'adv-title', req: true })}
+      <div class="field"><span class="field-l">Service status shown to residents <span class="req">*</span></span>
+        <div class="adv-status" role="radiogroup" aria-label="Service status">${STATUS_OPTS.map((o) => `<label class="adv-st adv-st--${sevOf(o)}"><input type="radio" name="adv-status" value="${o}" ${o === d.serviceStatus ? 'checked' : ''} data-change="adv-f" data-k="serviceStatus"/><span>${o.charAt(0) + o.slice(1).toLowerCase()}</span></label>`).join('')}</div></div>
+      ${field('Message', `<textarea id="adv-msg" rows="3" data-input="adv-f" data-k="message" placeholder="What residents will notice and why">${esc(d.message)}</textarea>`, { id: 'adv-msg', req: true })}
+      ${field('Instructions for residents', `<textarea id="adv-ins" rows="3" data-input="adv-f" data-k="instructions">${esc(d.instructions)}</textarea>`, { id: 'adv-ins', optional: true, hint: 'Filled in to match the service status. Edit it if needed.' })}
+    </section>
+    <section class="adv-sec"><h3 class="adv-sec-t"><span>2</span>Affected barangays <span class="req">*</span></h3>
+      <div id="adv-areas">${advAreas()}</div>
+    </section>
+    <section class="adv-sec"><h3 class="adv-sec-t"><span>3</span>Timing</h3>
+      <div class="grid-2">
+        ${field('Start time', `<input type="datetime-local" id="adv-start" value="${d.startAt}" data-input="adv-f" data-k="startAt"/>`, { id: 'adv-start', req: true })}
+        ${field('Next update time', `<input type="datetime-local" id="adv-next" value="${d.nextUpdate}" data-input="adv-f" data-k="nextUpdate"/>`, { id: 'adv-next', req: true })}
+      </div>
+      <label class="chk"><input type="checkbox" ${d.etrKnown ? 'checked' : ''} data-change="adv-etr-known"/> A reliable restoration estimate is available</label>
+      ${d.etrKnown ? field('Estimated restoration time', `<input type="datetime-local" id="adv-etr" value="${d.etr}" data-input="adv-f" data-k="etr"/>`, { id: 'adv-etr', optional: true, hint: 'Only enter if confident. Residents see this as an estimate.' }) : '<p class="field-h">If unknown, residents see the next update time instead.</p>'}
+    </section>
   </form>
-  <div class="adv-prev"><div class="adv-prev-l">${icon('eye', 14)} Resident preview</div><div id="adv-preview">${advPreview()}</div></div></div>`;
+  </div>`;
 }
 
-function advPreview() {
-  const d = advDraft;
-  const brgys = ZONES.filter((z) => d.areas.includes(z.id)).flatMap((z) => z.barangays);
-  return `<div class="phone"><div class="phone-bar">${icon('bell', 12)} SAMAR-AGOS, now</div>
-    <div class="phone-n"><strong>New water advisory</strong><span>${esc(d.title || 'Advisory title')}</span></div>
-    <article class="adv"><div class="adv-h">${status(d.serviceStatus === 'NO WATER' ? 'critical' : d.serviceStatus === 'QUALITY ADVISORY' ? 'info' : 'warning', d.serviceStatus)}</div>
-    <h3 class="adv-t">${esc(d.title || 'Advisory title')}</h3>
-    <dl class="adv-meta"><div><dt>Affected areas</dt><dd>${esc(brgys.join(', ') || '—')}</dd></div>
-    <div><dt>Started</dt><dd>${d.startAt ? fmtDateTime(fromLocalInput(d.startAt)) : '—'}</dd></div>
-    ${d.etrKnown && d.etr ? `<div><dt>Estimated restoration</dt><dd><strong>${fmtTime(fromLocalInput(d.etr))}</strong></dd></div>` : `<div><dt>Next update</dt><dd><strong>${d.nextUpdate ? fmtTime(fromLocalInput(d.nextUpdate)) : '—'}</strong></dd></div>`}</dl>
-    <p class="adv-msg">${esc(d.message || 'Message to residents…')}</p>
-    ${d.instructions ? `<div class="adv-ins">${icon('info', 14)}<div><strong>Provider instructions</strong><p>${esc(d.instructions)}</p></div></div>` : ''}</article></div>`;
-}
-const refreshPreview = () => {
-  const p = document.getElementById('adv-preview');
-  if (p) p.innerHTML = advPreview();
+const refreshAreas = () => {
+  const a = document.getElementById('adv-areas');
+  if (a) a.innerHTML = advAreas();
 };
+register({
+  'adv-zone': (el) => {
+    const ids = SERVICE_ZONES.find((g) => g.id === el.dataset.id)?.barangays || [];
+    const all = ids.every((id) => advDraft.areas.includes(id));
+    const set = new Set(advDraft.areas);
+    ids.forEach((id) => (all ? set.delete(id) : set.add(id)));
+    advDraft.areas = [...set];
+    refreshAreas();
+  },
+  'adv-clear': () => ((advDraft.areas = []), refreshAreas()),
+});
 
 registerInputs({
-  'adv-f': (el) => ((advDraft[el.dataset.k] = el.value), refreshPreview()),
+  'adv-f': (el) => {
+    const k = el.dataset.k;
+    if (k === 'serviceStatus' && isDefaultInstr(advDraft.instructions)) {
+      advDraft.instructions = STATUS_INSTRUCTIONS[el.value] || '';
+      const ins = document.getElementById('adv-ins');
+      if (ins) ins.value = advDraft.instructions;
+    }
+    advDraft[k] = el.value;
+  },
   'adv-area': (el) => {
     const set = new Set(advDraft.areas);
     el.checked ? set.add(el.value) : set.delete(el.value);
     advDraft.areas = [...set];
-    refreshPreview();
+    refreshAreas();
   },
   'adv-etr-known': (el) => {
     advDraft.etrKnown = el.checked;
@@ -187,24 +234,48 @@ export function openMapPanel(kind, id) {
     }
     if (a.spec) body += `<div class="kv-wide"><dt>Specification</dt><dd>${esc(a.spec)}</dd></div>`;
     body += `<div><dt>Condition</dt><dd>${esc(a.condition)}</dd></div><div><dt>Last maintenance</dt><dd>${a.lastMaint ? fmtDate(a.lastMaint) : 'Not recorded'}</dd></div><div><dt>Last update</dt><dd>${a.status === 'offline' ? '—' : updatedAgo(t.lastUpdate)}</dd></div></dl>
-      <div class="pnl-a"><a class="btn btn--outline btn--sm" href="#/p/assets/${a.id}">Asset details</a><button class="btn btn--primary btn--sm" data-action="wo-new" data-asset="${a.id}">${icon('wrench', 14)} Work order</button></div>`;
+      <div class="pnl-a"><a class="btn btn--outline btn--sm" href="#/p/assets/${a.id}">Asset details</a><button class="btn btn--primary btn--sm" data-action="wo-new" data-asset="${a.id}">Work order</button></div>`;
     return openDrawer(esc(a.name), body, { sub: `${a.id}` });
   }
   if (kind === 'zone') {
     const z = zoneById(id);
     const zt = t.zones[id];
+    const g = SERVICE_ZONES.find((x) => x.id === z.group);
     const reps = s.reports.filter((r) => r.zone === id && !['verified', 'repair_completed'].includes(r.status));
     const incs = s.incidents.filter((i) => i.zone === id && i.status !== 'Resolved');
+    const facs = CRITICAL_FACILITIES.filter((f) => f.zone === id);
+    const ok = zt.status === 'normal';
+    const pPct = Math.max(0, Math.min(100, (zt.pressure / 60) * 100));
+    const flowTxt = `${zt.flowDeltaPct >= 0 ? '+' : '−'}${fmt(Math.abs(zt.flowDeltaPct), 0)}% vs expected`;
+    const summary = ok
+      ? 'Pressure and flow are within the normal range for this barangay.'
+      : zt.flowDeltaPct > 8
+        ? 'Pressure is low while flow is higher than expected. This pattern can point to a leak.'
+        : 'Pressure is below normal. Some households may get weak or no water.';
     return openDrawer(
       esc(z.name),
-      `<div class="pnl-st">${status(zt.status, zt.status === 'normal' ? 'Normal pressure' : 'Pressure below normal', { lg: true })}</div>
-      <dl class="kv"><div><dt>Pressure</dt><dd><strong>${fmt(zt.pressure, 0)} PSI</strong> ${src('SIMULATED')} <span class="muted">normal ~${z.basePressure} PSI</span></dd></div>
-      <div><dt>Flow</dt><dd>${fmt(zt.flow, 1)} L/s ${src('SIMULATED')} <span class="muted">(${zt.flowDeltaPct >= 0 ? '+' : ''}${fmt(zt.flowDeltaPct, 0)}% vs expected)</span></dd></div>
-      <div><dt>Barangays</dt><dd>${esc(z.barangays.join(', '))}</dd></div><div><dt>Service connections</dt><dd>${fmt(z.connections)} ${src('MANUAL')}</dd></div>
-      <div><dt>Open resident reports</dt><dd>${reps.length} ${src('RESIDENT REPORTED')}</dd></div><div><dt>Active incidents</dt><dd>${incs.map((i) => `<a href="#/p/incidents/${i.id}">${i.id}</a>`).join(', ') || 'None'}</dd></div>
-      <div><dt>Critical facilities</dt><dd>${CRITICAL_FACILITIES.filter((f) => f.zone === id).map((f) => esc(f.name)).join(', ') || 'None'}</dd></div></dl>
-      <div class="pnl-a"><a class="btn btn--primary btn--sm" href="#/p/incidents">Review reports</a></div>`,
-      { sub: 'Barangay served by CWD' }
+      `<div class="zp">
+        <div class="zp-sum zp-sum--${SEV[zt.status]?.cls || 'off'}"><span class="zp-tag">${ok ? 'Normal' : zt.status === 'critical' ? 'Very low pressure' : 'Low pressure'}</span><p>${summary}</p></div>
+        <section class="zp-sec"><div class="zp-sec-h"><h3>Live readings</h3>${src('SIMULATED')}</div>
+          <div class="zp-read">
+            <div><span>Pressure</span><strong>${fmt(zt.pressure, 0)}<small>PSI</small></strong><div class="zp-bar"><i style="width:${pPct}%"></i><b style="left:${(26 / 60) * 100}%" title="Low-pressure alarm 26 PSI"></b></div><em>Normal about ${z.basePressure} PSI</em></div>
+            <div><span>Flow</span><strong>${fmt(zt.flow, 1)}<small>L/s</small></strong><em>${flowTxt}</em></div>
+          </div>
+        </section>
+        <section class="zp-sec"><div class="zp-sec-h"><h3>Community</h3></div>
+          <dl class="zp-kv">
+            <div><dt>Open resident reports</dt><dd>${reps.length}</dd></div>
+            <div><dt>Active incidents</dt><dd>${incs.length ? incs.map((i) => `<a href="#/p/incidents/${i.id}">${i.id}</a>`).join(', ') : 'None'}</dd></div>
+            <div><dt>Service connections</dt><dd>${z.connections ? `${fmt(z.connections)} <span class="muted">estimated</span>` : 'Communal supply (Level I)'}</dd></div>
+            <div><dt>Population (2020)</dt><dd>${fmt(z.pop2020)}</dd></div>
+          </dl>
+        </section>
+        <section class="zp-sec"><div class="zp-sec-h"><h3>Critical facilities</h3></div>
+          ${facs.length ? `<ul class="zp-fac">${facs.map((f) => `<li><strong>${esc(f.name)}</strong><span>${esc(f.kind)}</span></li>`).join('')}</ul>` : '<p class="zp-none">No critical facilities recorded in this barangay.</p>'}
+        </section>
+        <div class="zp-a"><button class="btn btn--outline btn--sm" data-action="brgy-open" data-id="${id}">View households</button>${reps.length || incs.length ? `<a class="btn btn--primary btn--sm" href="${incs.length ? `#/p/incidents/${incs[0].id}` : '#/p/incidents'}">${incs.length ? 'Open incident' : `Review ${reps.length} report${reps.length === 1 ? '' : 's'}`}</a>` : ''}</div>
+      </div>`,
+      { sub: g ? `${g.name}, ${g.area}` : 'Barangay served by CWD' }
     );
   }
   if (kind === 'report') {
@@ -240,7 +311,8 @@ register({
     const f = document.getElementById('wo-form');
     const d = formData(f);
     if (!d.description.trim() || !d.location.trim()) return S.toast('Location and description are required', 'error');
-    const wo = await S.createWorkOrder({ incidentId: el.dataset.inc || null, assetId: d.assetId, location: d.location, priority: d.priority, team: d.team, description: d.description, target: fromLocalInput(d.target) || Date.now() + 6 * 3600000 });
+    const r = S.responders().find((x) => x.loginEmail === d.responder);
+    const wo = await S.createWorkOrder({ incidentId: el.dataset.inc || null, assetId: d.assetId, location: d.location, priority: d.priority, team: r ? r.name : '', responder: r ? r.loginEmail : null, description: d.description, target: fromLocalInput(d.target) || Date.now() + 6 * 3600000 });
     closeOverlay();
     if (!el.dataset.inc) go(`#/p/work-orders/${wo.id}`);
   }),

@@ -9,6 +9,7 @@ import { notificationsView, go } from '../app.js';
 import { incidentViews } from './provider-incidents.js';
 import { forecastViews } from './provider-forecast.js';
 import { safetyViews } from './provider-safety.js';
+import { leakViews } from './provider-leaks.js';
 import { ASSET_CATEGORIES, categoryOf, assetLifecycle, assetArt } from '../assetinfo.js';
 import './provider-households.js';
 import { openAdvisoryModal, openWorkOrderModal, incStatus, woStatusBadge, ZONE_COLORS, incidentTable } from './provider-shared.js';
@@ -636,6 +637,46 @@ const assetDetail = {
 };
 
 // ---------------------------------------------------------------- ANALYTICS
+// Water consumption (simulated from the reservoir outflow, calibrated to CWD's 9.6 ML/day average).
+function consumptionSection() {
+  const s = st();
+  const t = s.tele;
+  const h = s.history;
+  const step = 3; // 15-minute points
+  const keep = (a) => a.filter((_, i) => (a.length - 1 - i) % step === 0);
+  const act = keep(h.demand);
+  const times = keep(h.t);
+  const normal = times.map((tm) => S.BASE_DEMAND * S.diurnal(tm));
+  const n = act.length;
+  const normalNow = S.BASE_DEMAND * S.diurnal(t.simTime);
+  const vsNow = ((t.demand - normalNow) / normalNow) * 100;
+  const total24 = (h.demand.reduce((a, b) => a + b, 0) / h.demand.length) * 1000; // m³ over 24 h
+  const normal24 = S.BASE_DEMAND * 1000;
+  const peakI = h.demand.indexOf(Math.max(...h.demand));
+  // Scaled from CWD's published 107.7 L per person per day at average demand.
+  const lpcd = CWD_FACTS.lpcd * (t.demand / S.BASE_DEMAND);
+  const zones = SERVICE_ZONES.map((g) => {
+    const flow = ZONES.filter((z) => z.group === g.id).reduce((a, z) => a + (t.zones[z.id]?.flow || 0), 0);
+    return { label: `${g.name}, ${g.area}`, value: Math.round(flow * 86.4), color: '#1E3A5F' };
+  });
+  const sign = (v) => `${v >= 0 ? '+' : '−'}${fmt(Math.abs(v), 0)}%`;
+  return `<div class="kpis kpis--4">
+      ${kpi({ label: 'Consumption now', value: fmt(t.demand, 2), unit: 'ML/day', source: 'SIMULATED', sub: `${sign(vsNow)} vs normal for this hour`, sev: vsNow > 12 ? 'warning' : null })}
+      ${kpi({ label: 'Last 24 hours', value: fmt(total24, 0), unit: 'm³', source: 'SIMULATED', sub: `${sign(((total24 - normal24) / normal24) * 100)} vs a normal day (${fmt(normal24, 0)} m³)` })}
+      ${kpi({ label: 'Per person', value: fmt(lpcd, 0), unit: 'L/day', source: 'ESTIMATED', sub: `CWD average ${fmt(CWD_FACTS.lpcd, 0)} L/day` })}
+      ${kpi({ label: 'Peak hour', value: h.t[peakI] ? new Date(h.t[peakI]).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '—', source: 'SIMULATED', sub: `${fmt(Math.max(...h.demand), 2)} ML/day at peak` })}
+    </div>
+    <div class="ops-grid ops-grid--eq an-cons">
+      ${card(
+        'Consumption trend, last 24 hours',
+        lineChart({ id: 'an-cons', label: 'Water consumption versus the normal daily pattern, last 24 hours', series: [{ name: 'Consumption', color: '#1E3A5F', values: act, area: true }, { name: 'Normal pattern', color: '#9AA6B4', values: normal, dash: true }], labels: times.map((x) => new Date(x).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })), xTicks: [{ i: 0, label: '−24 h' }, { i: Math.round(n / 2), label: '−12 h' }, { i: n - 1, label: 'Now' }], yMin: 0, yFmt: (v) => `${fmt(v, 1)}`, legend: true, h: 220 }) +
+          '<div class="chart-cap">ML/day. Includes estimated losses (non-revenue water).</div>',
+        { actions: src('SIMULATED') }
+      )}
+      ${card('Consumption by service zone', barChart({ id: 'an-cons-z', label: 'Current consumption by service zone, cubic metres per day', bars: zones.map((b) => ({ ...b, showValue: true })), h: 220, yFmt: (v) => fmt(v, 0) }) + '<div class="chart-cap">m³ per day at the current rate.</div>', { actions: src('SIMULATED') })}
+    </div>`;
+}
+
 let pzZone = 'all';
 const PZ_ALARM = 26;
 const PZ_LABEL = { normal: 'Normal', warning: 'Low pressure', critical: 'Very low', offline: 'No data' };
@@ -720,7 +761,7 @@ register({
 
 const analytics = {
   title: 'Analytics',
-  regions: { pressure: pressureByZone },
+  regions: { pressure: pressureByZone, consumption: consumptionSection },
   render() {
     const s = st();
     const typeCounts = REPORT_TYPES.map((t) => ({ label: t.label.replace('Unusual ', ''), value: s.reports.filter((r) => r.type === t.id).length })).filter((b) => b.value);
@@ -747,6 +788,8 @@ const analytics = {
           <div><dt>Coverage</dt><dd>${CWD_FACTS.barangaysServed} of ${CWD_FACTS.barangaysTotal} barangays, ${fmt(CWD_FACTS.networkKm, 1)} km of pipes</dd></div>
         </dl><p class="fine">Source: ${esc(CWD_FACTS.source)}; Water Safety Plan 2022.</p>`)}
       </div>
+      <div class="an-sec"><div><h2>Water consumption</h2><p>How much water the city is using now, compared with a normal day</p></div>${src('SIMULATED')}</div>
+      <div data-region="consumption">${this.regions.consumption()}</div>
       <div class="an-sec"><div><h2>Pressure by zone</h2><p>Last 24 simulated hours. The dashed line marks the ${PZ_ALARM} PSI low-pressure alarm. Select a zone to see only its barangays, or a barangay to see its households and consumption.</p></div>${src('SIMULATED')}</div>
       <div data-region="pressure">${this.regions.pressure()}</div>
       <div class="an-sec"><div><h2>Resident reports</h2><p>What residents report, and where</p></div>${src('RESIDENT REPORTED')}</div>
@@ -779,6 +822,7 @@ export const providerViews = {
   ...incidentViews,
   ...forecastViews,
   ...safetyViews,
+  ...leakViews,
   advisories,
   assets,
   'assets/:id': assetDetail,

@@ -4,7 +4,7 @@
 //  - streams shared collections from Firestore into that state (onSnapshot), and
 //  - writes back only documents that changed since they were last synced (flush on commit).
 // Telemetry stays a per-device simulation driven by the shared system/control document.
-import { FIREBASE_CONFIG } from './firebase-config.js';
+import { FIREBASE_CONFIG, ADVISORY_EMAIL_URL } from './firebase-config.js';
 import * as S from './store.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
@@ -14,6 +14,7 @@ export const COLLS = ['reports', 'incidents', 'workOrders', 'advisories', 'notif
 const SEED_COUNTERS = { report: 1, incident: 1, wo: 1, adv: 1 };
 
 let F = null; // SDK functions
+let A = null; // firebase-app module (a second app instance creates responder accounts)
 let auth = null;
 let db = null;
 let session = null; // { uid, email, profile, isProvider }
@@ -27,10 +28,28 @@ let syncedPublic = null;
 export async function initBackend() {
   const [app, a, fs] = await Promise.all([import(`${SDK}/firebase-app.js`), import(`${SDK}/firebase-auth.js`), import(`${SDK}/firebase-firestore.js`)]);
   F = { ...a, ...fs };
+  A = app;
   const fbApp = app.initializeApp(FIREBASE_CONFIG);
   auth = a.getAuth(fbApp);
   db = fs.getFirestore(fbApp);
+  S.onAdvisoryChange(pingAdvisoryEmail);
 }
+
+// Ask the email script to check now instead of waiting for its 5-minute timer (advisories and
+// responder credentials). Delayed so the change has reached Firestore; the script decides what to send.
+function pingAdvisoryEmail(delay = 6000) {
+  if (!ADVISORY_EMAIL_URL || !session?.isProvider) return;
+  setTimeout(() => fetch(ADVISORY_EMAIL_URL, { mode: 'no-cors' }).catch(() => {}), delay);
+}
+
+// ---------------------------------------------------------------- writes
+// Every write goes through a transaction. A transaction commits with one ordinary HTTPS request,
+// while setDoc/writeBatch use Firestore's streaming channel, which ad and tracker blockers often
+// block (net::ERR_BLOCKED_BY_CLIENT), leaving the write pending forever.
+const commitOps = (ops, store = db) => F.runTransaction(store, async (tx) => ops.forEach((op) => op(tx)));
+const setDoc = (ref, data, opts) => commitOps([(t) => (opts ? t.set(ref, data, opts) : t.set(ref, data))], ref.firestore);
+const updateDoc = (ref, data) => commitOps([(t) => t.update(ref, data)], ref.firestore);
+const deleteDoc = (ref) => commitOps([(t) => t.delete(ref)], ref.firestore);
 
 // ---------------------------------------------------------------- auth
 export const onAuth = (cb) => F.onAuthStateChanged(auth, cb);
@@ -69,11 +88,14 @@ export const authMessage = (e) => AUTH_ERRORS[e?.code] || e?.message || 'Somethi
 export async function loadSession(user) {
   const [prof, access] = await Promise.all([F.getDoc(F.doc(db, 'users', user.uid)), F.getDoc(F.doc(db, 'config', 'access'))]);
   const emails = access.exists() ? access.data().providerEmails || [] : [];
+  const responders = access.exists() ? access.data().responderEmails || [] : [];
+  const email = (user.email || '').toLowerCase();
   session = {
     uid: user.uid,
-    email: (user.email || '').toLowerCase(),
+    email,
     profile: prof.exists() ? prof.data() : null,
-    isProvider: emails.includes((user.email || '').toLowerCase()),
+    isProvider: emails.includes(email),
+    isResponder: !emails.includes(email) && responders.includes(email),
     accessExists: access.exists(),
   };
   return session;
@@ -82,7 +104,7 @@ export async function loadSession(user) {
 export async function saveProfile(data) {
   const profile = { ...(session.profile || {}), ...data, email: session.email, updatedAt: Date.now() };
   if (!session.profile) profile.createdAt = Date.now();
-  await F.setDoc(F.doc(db, 'users', session.uid), profile, { merge: true });
+  await setDoc(F.doc(db, 'users', session.uid), profile, { merge: true });
   session.profile = profile;
   return profile;
 }
@@ -99,7 +121,7 @@ async function reauth(password) {
 export async function changeEmail(newEmail, password) {
   const next = newEmail.trim().toLowerCase();
   await reauth(password);
-  if (session.isProvider) await F.updateDoc(F.doc(db, 'config', 'access'), { providerEmails: F.arrayUnion(next), updatedAt: Date.now() });
+  if (session.isProvider) await updateDoc(F.doc(db, 'config', 'access'), { providerEmails: F.arrayUnion(next), updatedAt: Date.now() });
   await F.verifyBeforeUpdateEmail(auth.currentUser, next);
 }
 export async function changePassword(current, next) {
@@ -107,9 +129,20 @@ export async function changePassword(current, next) {
   await F.updatePassword(auth.currentUser, next);
 }
 
+// ---------------------------------------------------------------- valid ID
+// The ID photo lives in its own document (validIds/{uid}) so lists of users stay small.
+// Reporting requires that document (enforced in firestore.rules), so a profile flag alone is not enough.
+export async function saveValidId(image) {
+  await setDoc(F.doc(db, 'validIds', session.uid), { uid: session.uid, image, uploadedAt: Date.now() });
+  await saveProfile({ idSubmitted: true, idUploadedAt: Date.now() });
+}
+export async function getValidId(uid) {
+  const d = await F.getDoc(F.doc(db, 'validIds', uid));
+  return d.exists() ? d.data() : null;
+}
 // First user of a fresh project becomes staff administrator.
 export async function claimProviderAccess() {
-  await F.setDoc(F.doc(db, 'config', 'access'), { providerEmails: [session.email], createdBy: session.uid, createdAt: Date.now() });
+  await setDoc(F.doc(db, 'config', 'access'), { providerEmails: [session.email], createdBy: session.uid, createdAt: Date.now() });
   session.isProvider = true;
   session.accessExists = true;
 }
@@ -120,8 +153,62 @@ export async function getProviderEmails() {
 }
 export async function setProviderEmails(list) {
   const clean = [...new Set(list.map((e) => e.trim().toLowerCase()).filter(Boolean))];
-  await F.updateDoc(F.doc(db, 'config', 'access'), { providerEmails: clean, updatedAt: Date.now() });
+  await updateDoc(F.doc(db, 'config', 'access'), { providerEmails: clean, updatedAt: Date.now() });
   return clean;
+}
+
+// ---------------------------------------------------------------- responders (staff)
+// Staff add a responder by name and contact email. SAMAR-AGOS generates a sign-in email and a
+// temporary password, creates the account and lists it in config/access.responderEmails. The email
+// script sends the credentials to the contact email, then removes the password from Firestore.
+export const RESPONDER_DOMAIN = 'responders.samar-agos.app';
+const slug = (name) =>
+  name.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z\s]/g, '').trim().split(/\s+/).filter(Boolean);
+export function loginEmailFor(name, taken) {
+  const w = slug(name);
+  const base = w.length > 1 ? `${w[0]}.${w[w.length - 1]}` : w[0] || 'responder';
+  for (let n = 1; ; n++) {
+    const e = `${base}${n > 1 ? n : ''}@${RESPONDER_DOMAIN}`;
+    if (!taken.includes(e)) return e;
+  }
+}
+export function tempPassword() {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const r = crypto.getRandomValues(new Uint32Array(12));
+  return Array.from(r, (x) => abc[x % abc.length]).join('');
+}
+export async function createResponder({ name, contactEmail, phone }) {
+  const access = await F.getDoc(F.doc(db, 'config', 'access'));
+  const taken = access.data()?.responderEmails || [];
+  const loginEmail = loginEmailFor(name, taken);
+  const password = tempPassword();
+  // A second app instance signs in as the new account, so the staff member stays signed in.
+  const tmp = A.initializeApp(FIREBASE_CONFIG, `responder-${Date.now()}`);
+  try {
+    const tAuth = F.getAuth(tmp);
+    const cred = await F.createUserWithEmailAndPassword(tAuth, loginEmail, password);
+    const uid = cred.user.uid;
+    const now = Date.now();
+    await setDoc(F.doc(F.getFirestore(tmp), 'users', uid), { name, phone: phone || '', email: loginEmail, contactEmail, role: 'responder', mustChangePassword: true, createdAt: now, updatedAt: now });
+    await F.signOut(tAuth);
+    await updateDoc(F.doc(db, 'config', 'access'), { responderEmails: F.arrayUnion(loginEmail), updatedAt: now });
+    const doc = { uid, name, loginEmail, contactEmail, phone: phone || '', tempPassword: password, credSent: false, createdAt: now, createdBy: session.email };
+    await setDoc(F.doc(db, 'responders', uid), doc);
+    pingAdvisoryEmail(2500);
+    return { ...doc, id: uid };
+  } finally {
+    A.deleteApp(tmp).catch(() => {});
+  }
+}
+// Removing a responder ends their access at once (rules and app both check the list).
+export async function removeResponder(r) {
+  await updateDoc(F.doc(db, 'config', 'access'), { responderEmails: F.arrayRemove(r.loginEmail), updatedAt: Date.now() });
+  await deleteDoc(F.doc(db, 'responders', r.id));
+}
+// First sign-in of a responder: replace the temporary password (no re-entry needed right after sign-in).
+export async function setNewPassword(next) {
+  await F.updatePassword(auth.currentUser, next);
+  await saveProfile({ mustChangePassword: false });
 }
 
 // ---------------------------------------------------------------- households & meter readings (staff)
@@ -142,12 +229,12 @@ export async function myReadings() {
 }
 export async function saveReading({ uid, barangay, month, m3 }) {
   const doc = { uid, barangay, month, m3, recordedAt: Date.now(), recordedBy: session.email };
-  await F.setDoc(F.doc(db, 'meterReadings', `${uid}_${month}`), doc);
+  await setDoc(F.doc(db, 'meterReadings', `${uid}_${month}`), doc);
   return { id: `${uid}_${month}`, ...doc };
 }
 
 export async function setNotifState(id, state) {
-  await F.setDoc(F.doc(db, 'users', session.uid), { notifState: { [id]: state } }, { merge: true });
+  await setDoc(F.doc(db, 'users', session.uid), { notifState: { [id]: state } }, { merge: true });
   session.profile = session.profile || {};
   session.profile.notifState = { ...(session.profile.notifState || {}), [id]: state };
 }
@@ -191,6 +278,10 @@ function writable(coll, item) {
     if (session.isProvider) return true;
     return item.uid === session.uid || (item.audience === 'provider' && !synced.notifications.has(item.id));
   }
+  if (session.isResponder) {
+    if (coll === 'workOrders') return item.responder === session.email;
+    return coll === 'notifications' && item.uid === session.uid;
+  }
   if (session.isProvider) {
     // the smart tank is simulated on each device; only its initial record is stored
     if (coll === 'emergencyTanks' && item.mode === 'SIMULATED') return !synced.emergencyTanks.has(item.id);
@@ -212,10 +303,9 @@ function publicOf(s) {
 
 // Write every changed document in one batch. Called from store.commit().
 export function flush() {
-  if (!ready || !session) return;
+  if (!ready || !session) return Promise.resolve();
   const s = S.getState();
-  const batch = F.writeBatch(db);
-  let n = 0;
+  const ops = [];
   for (const coll of COLLS) {
     for (const item of s[coll]) {
       if (!item?.id || !writable(coll, item)) continue;
@@ -223,8 +313,7 @@ export function flush() {
       const key = stable(data);
       if (synced[coll].get(item.id) === key) continue;
       synced[coll].set(item.id, key);
-      batch.set(F.doc(db, coll, item.id), data);
-      n++;
+      ops.push({ coll, id: item.id, op: (t) => t.set(F.doc(db, coll, item.id), data) });
     }
   }
   if (session.isProvider) {
@@ -232,18 +321,27 @@ export function flush() {
     const ck = stable(c);
     if (ck !== syncedControl) {
       syncedControl = ck;
-      batch.set(F.doc(db, 'system', 'control'), { ...JSON.parse(JSON.stringify(c)), updatedAt: Date.now(), updatedBy: session.email });
-      n++;
+      const doc = { ...JSON.parse(JSON.stringify(c)), updatedAt: Date.now(), updatedBy: session.email };
+      ops.push({ op: (t) => t.set(F.doc(db, 'system', 'control'), doc) });
     }
     const p = publicOf(s);
     const pk = stable(p);
     if (pk !== syncedPublic) {
       syncedPublic = pk;
-      batch.set(F.doc(db, 'system', 'public'), { ...p, updatedAt: Date.now() });
-      n++;
+      ops.push({ op: (t) => t.set(F.doc(db, 'system', 'public'), { ...p, updatedAt: Date.now() }) });
     }
   }
-  if (n) batch.commit().catch((e) => S.toast(`Could not save to the server (${e.code || e.message})`, 'error'));
+  if (!ops.length) return Promise.resolve();
+  const run = async () => {
+    for (let i = 0; i < ops.length; i += 400) await commitOps(ops.slice(i, i + 400).map((o) => o.op));
+  };
+  return run().catch((e) => {
+    // forget what failed so the next change retries it
+    ops.forEach((o) => o.coll && synced[o.coll].delete(o.id));
+    syncedControl = null;
+    syncedPublic = null;
+    throw e;
+  });
 }
 
 // ---------------------------------------------------------------- live sync
@@ -265,6 +363,12 @@ export async function startSync() {
   if (session.isProvider) {
     COLLS.filter((c) => c !== 'notifications').forEach((c) => add(c, col(c), collectionHandler(c)));
     add('notifications', F.query(col('notifications'), F.where('audience', '==', 'provider')), collectionHandler('notifications', 'provider'));
+    add('responders', col('responders'), (docs) => S.setResponders(docs));
+  } else if (session.isResponder) {
+    // Responders see only the work orders assigned to them, plus the records those link to.
+    add('workOrders', F.query(col('workOrders'), F.where('responder', '==', session.email)), collectionHandler('workOrders'));
+    ['incidents', 'assets'].forEach((c) => add(c, col(c), collectionHandler(c)));
+    add('notif-own', F.query(col('notifications'), F.where('uid', '==', uid)), collectionHandler('notifications', 'own'));
   } else {
     add('reports', F.query(col('reports'), F.where('reporterUid', '==', uid)), collectionHandler('reports'));
     ['incidents', 'workOrders', 'advisories', 'altWater', 'emergencyTanks', 'assets'].forEach((c) => add(c, col(c), collectionHandler(c)));
@@ -306,7 +410,7 @@ export async function startSync() {
   // A fresh project has no data yet: the first staff member seeds the demo dataset.
   if (session.isProvider && !controlExists) await seedRemote();
   ready = true;
-  if (session.isProvider) flush();
+  if (session.isProvider) flush().catch((e) => console.error('Initial sync write failed', e));
 }
 
 export function stopSync() {
@@ -321,16 +425,14 @@ export function stopSync() {
 // ---------------------------------------------------------------- seeding / reset (staff)
 async function commitInChunks(ops) {
   for (let i = 0; i < ops.length; i += 400) {
-    const batch = F.writeBatch(db);
-    ops.slice(i, i + 400).forEach((op) => op(batch));
-    await batch.commit();
+    await commitOps(ops.slice(i, i + 400));
   }
 }
 
 export async function removeDoc(coll, id) {
   if (!session?.isProvider) return;
   synced[coll]?.delete(id);
-  await F.deleteDoc(F.doc(db, coll, id));
+  await deleteDoc(F.doc(db, coll, id));
 }
 
 export async function seedRemote() {

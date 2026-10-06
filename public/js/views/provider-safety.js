@@ -1,4 +1,4 @@
-// Provider: Water Safety — potability checks before water reaches residents.
+// Provider: Water Safety — quality checks on water for daily household use.
 import * as S from '../store.js';
 import { ZONES } from '../data.js';
 import { icon, src, card, register, SEV } from '../ui.js';
@@ -9,9 +9,9 @@ import { isDemoMode } from '../app.js';
 
 const val = (p, v = p.value) => (v == null ? '—' : `${fmt(v, p.d ?? 1)}${p.unit ? ` ${p.unit}` : ''}`);
 const VERDICT = {
-  safe: { label: 'Safe to use', text: 'All readings are within drinking-water limits at every monitoring point.' },
+  safe: { label: 'Safe to use', text: 'All readings are within the limits for daily household use at every monitoring point.' },
   caution: { label: 'Needs attention', text: 'Health limits are met, but an operational reading is outside its normal range.' },
-  unsafe: { label: 'Not safe to use', text: 'Readings exceed drinking-water limits. Hold or treat water before it reaches residents.' },
+  unsafe: { label: 'Not safe to use', text: 'Readings exceed the limits for daily household use. Hold or treat water before it reaches residents.' },
 };
 const SEV_OF = { safe: 'normal', caution: 'warning', unsafe: 'critical' };
 const MARK = { normal: '#1E3A5F', warning: '#D97706', critical: '#C0262D', offline: '#9AA6B4' };
@@ -138,7 +138,7 @@ function rangeBar(p) {
 function verdictStrip(ws) {
   const v = VERDICT[ws.verdict];
   return `<section class="ws-verdict ws-verdict--${ws.verdict}">
-    <div class="ws-v-t"><span class="kpi-label">Water potability</span><strong>${v.label}</strong><span>${v.text}</span></div>
+    <div class="ws-v-t"><span class="kpi-label">Water for daily use</span><strong>${v.label}</strong><span>${v.text}</span></div>
     <div class="ws-v-n">
       <div><span>IoT sensors</span><strong>${ws.stations.length}</strong></div>
       <div><span>Readings in range</span><strong>${ws.stations.length * S.WQ_PARAMS.length - ws.failures.filter((f) => f.station.id).length} of ${ws.stations.length * S.WQ_PARAMS.length}</strong></div>
@@ -184,7 +184,7 @@ function actionsCard(ws) {
           ['flask', 'Adjust treatment', 'Check the chlorine dosing pump and coagulant feed.'],
           ['droplets', 'Flush and re-test', 'Flush the main line, then re-test all three points.'],
           ['clipboard', 'Confirm with lab', 'Take a sample for E. coli and total coliform.'],
-          ['megaphone', 'Warn residents', 'Advise boiling drinking water until results are clear.'],
+          ['megaphone', 'Warn residents', 'Advise residents to limit tap water use until results are clear.'],
         ]
       : [
           ['activity', 'Investigate', 'Find out why the reading is outside its normal range.'],
@@ -193,7 +193,7 @@ function actionsCard(ws) {
   return card(
     'Recommended actions',
     `<ol class="ws-steps">${steps.map(([ic, t, d], i) => `<li><span class="ws-step-ic">${icon(ic, 18)}<b>${i + 1}</b></span><strong>${esc(t)}</strong><span>${esc(d)}</span></li>`).join('')}</ol>
-    ${ws.verdict === 'unsafe' ? `<div class="ws-act"><a class="btn btn--outline btn--sm" href="#/p/work-orders">Open work orders</a><button class="btn btn--primary btn--sm" data-action="ws-boil">Issue boil-water advisory</button></div>` : ''}`,
+    ${ws.verdict === 'unsafe' ? `<div class="ws-act"><a class="btn btn--outline btn--sm" href="#/p/work-orders">Open work orders</a><button class="btn btn--primary btn--sm" data-action="ws-boil">Issue water quality advisory</button></div>` : ''}`,
     { sub: 'Follow the utility’s water safety plan' }
   );
 }
@@ -267,7 +267,7 @@ function standardsCard() {
   return card(
     'What is checked',
     `<div class="ws-std">${items.map((x) => `<div><span class="ws-std-ic">${ico(x.k, 18)}</span><strong>${esc(x.label)}</strong><em>${esc(x.std)}</em><span>${esc(x.why)}</span></div>`).join('')}</div>
-    <p class="fine">Health limits follow the Philippine National Standards for Drinking Water (PNSDW 2017). Temperature has no health limit; ≤ 32 °C is an operational guide.</p>`
+    <p class="fine">Limits follow the Philippine National Standards for Drinking Water (PNSDW 2017), the national water quality standard also applied to piped household supply. Temperature has no health limit; ≤ 32 °C is an operational guide.</p>`
   );
 }
 
@@ -316,11 +316,11 @@ register({
   'ws-station': (el) => ((selStation = el.dataset.id), rerender()),
   'ws-boil': () =>
     openAdvisoryModal({
-      title: 'Boil-Water Advisory — All Served Barangays',
+      title: 'Water Quality Advisory — All Served Barangays',
       areas: ZONES.map((z) => z.id),
       serviceStatus: 'QUALITY ADVISORY',
-      message: 'Water quality tests found readings outside drinking-water limits. Boil water for at least one minute before drinking or cooking until further notice.',
-      instructions: 'Boil drinking and cooking water for at least 1 minute. Use bottled or boiled water for infants. Water is still fine for bathing and cleaning.',
+      message: 'Water quality tests found readings outside the limits for daily household use. Please limit the use of tap water until further notice.',
+      instructions: 'Use tap water only for flushing and cleaning until further notice. Boil it for at least 1 minute before using it for cooking or washing food. Avoid using it to bathe infants.',
     }),
 });
 
@@ -328,7 +328,7 @@ const waterSafety = {
   title: 'Water Safety',
   regions: { main },
   render() {
-    return `<div class="page-h"><div><h1>Water Safety</h1><p class="page-sub">Potability checks before water reaches residents — pH, turbidity, chlorine, temperature and dissolved solids.</p></div></div>
+    return `<div class="page-h"><div><h1>Water Safety</h1><p class="page-sub">Quality checks on water for daily household use before it reaches residents: pH, turbidity, chlorine, temperature and dissolved solids.</p></div></div>
       <div id="ws-top">${top()}</div><div data-region="main">${main()}</div>${isDemoMode() ? demoPanel() : ''}`;
   },
 };

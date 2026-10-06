@@ -39,8 +39,8 @@ function progressMini(r) {
 const OUTLOOK = {
   stable: { sev: 'normal', label: 'Enough water', text: 'There should be enough water for your area over the next day.' },
   watch: { sev: 'info', label: 'Enough water for now', text: 'There should be enough water. Your water provider is keeping a close eye on supply.' },
-  risk: { sev: 'warning', label: 'Water may run low', text: 'Water may run low within the next day. Consider storing some for drinking and cooking.' },
-  critical: { sev: 'critical', label: 'Water likely to run low', text: 'Water may run low within a few hours. Store water now for drinking and cooking.' },
+  risk: { sev: 'warning', label: 'Water may run low', text: 'Water may run low within the next day. Consider storing some for your daily needs.' },
+  critical: { sev: 'critical', label: 'Water likely to run low', text: 'Water may run low within a few hours. Store water now for your daily needs.' },
 };
 
 function outlookStrip(fc) {
@@ -109,7 +109,7 @@ const FRIENDLY = {
   'REDUCED PRESSURE': ['Water pressure is low in your area', 'Water may come out weakly, especially upstairs.', 'Low pressure'],
   'NO WATER': ['No water in your area right now', 'Your water provider is working to bring it back.', 'No water'],
   'INTERMITTENT SUPPLY': ['Water is on and off in your area', 'You may have water only at certain times.', 'On and off'],
-  'QUALITY ADVISORY': ['Take care before drinking tap water', 'Please follow the advice from your water provider below.', 'Quality notice'],
+  'QUALITY ADVISORY': ['Take care when using tap water', 'Please follow the advice from your water provider below.', 'Quality notice'],
   'SCHEDULED MAINTENANCE': ['Planned repair work in your area', 'Water may be off for a while during the work.', 'Maintenance'],
   'SUPPLY WARNING': ['Water may run low soon', 'Your water provider is asking residents to use water wisely.', 'May run low'],
   'UNDER INVESTIGATION': ["We're checking a problem in your area", "We'll post an update once we know more.", 'Being checked'],
@@ -129,7 +129,7 @@ function fixStep(svc) {
 function homeStatus() {
   const s = st();
   const svc = S.residentService(s);
-  // Water service only (is water flowing?). Drinking-water safety has its own banner, tile and page.
+  // Water service only (is water flowing?). Water quality has its own banner, tile and page.
   const [headline, fallback, short] = FRIENDLY[svc.label] || [titleCase(svc.label), '', titleCase(svc.label)];
   const sev = svc.sev;
   const fromProvider = svc.advisory && !svc.restored;
@@ -155,7 +155,7 @@ function homeStatus() {
 }
 
 // Four small tiles, each opening its own page — same component as the operator KPI tiles.
-const SAFE_SHORT = { safe: ['Yes', 'Passed all tests'], caution: ['Yes', 'One reading being watched'], unsafe: ['No', 'Do not drink tap water'] };
+const SAFE_SHORT = { safe: ['Yes', 'Passed all tests'], caution: ['Yes', 'One reading being watched'], unsafe: ['No', 'Limit use of tap water'] };
 const OUTLOOK_TILE = { stable: 'Enough', watch: 'Enough', risk: 'May run low', critical: 'Likely low' };
 const dotSub = (sev, text) => `<span class="sys-dot sys-dot--${SEV[sev].cls}" aria-hidden="true"></span> ${text}`;
 function homeTiles() {
@@ -166,7 +166,7 @@ function homeTiles() {
   const open = s.reports.filter((r) => r.mine && r.status !== 'verified').sort((a, b) => b.submittedAt - a.submittedAt);
   const [safeV, safeT] = SAFE_SHORT[ws.verdict];
   return [
-    kpi({ label: 'Safe to drink', value: safeV, sub: dotSub(SAFE_SEV[ws.verdict], safeT), sev: ws.verdict === 'safe' ? null : SAFE_SEV[ws.verdict], link: '#/r/water-safety' }),
+    kpi({ label: 'Safe to use', value: safeV, sub: dotSub(SAFE_SEV[ws.verdict], safeT), sev: ws.verdict === 'safe' ? null : SAFE_SEV[ws.verdict], link: '#/r/water-safety' }),
     kpi({ label: 'Next 24 hours', value: OUTLOOK_TILE[fcKey], sub: dotSub(OUTLOOK[fcKey].sev, 'Water supply forecast'), sev: fcKey === 'risk' || fcKey === 'critical' ? OUTLOOK[fcKey].sev : null, link: '#/r/outlook' }),
     kpi({ label: 'Notices', value: adv.length, sub: adv.length ? dotSub(advSev(adv[0]), esc(adv[0].title)) : dotSub('normal', 'None for your area'), link: '#/r/advisories' }),
     kpi({ label: 'My reports', value: open.length, unit: 'open', sub: open.length ? dotSub(residentReportStatus(open[0]).sev, esc(residentReportStatus(open[0]).label)) : 'Report a problem anytime', link: '#/r/reports' }),
@@ -181,9 +181,9 @@ function homeTips() {
   const alt = s.altWater.filter((p) => p.active && p.zone === RESIDENT.zone && p.status !== 'CLOSED');
   const tips = [];
   const problem = svc.sev !== 'normal' && !svc.restored;
-  if (S.waterSafety(s).verdict === 'unsafe') tips.push('<strong>Do not drink tap water.</strong> Boil it for at least 1 minute, or use bottled water, for drinking, cooking and brushing teeth.');
-  else if (svc.label === 'QUALITY ADVISORY') tips.push('Use boiled or bottled water for drinking and cooking until the advisory ends.');
-  else if (problem) tips.push('Save stored water for drinking, cooking and washing hands.');
+  if (S.waterSafety(s).verdict === 'unsafe') tips.push('<strong>Limit use of tap water.</strong> Use it for flushing and cleaning only, and boil it for at least 1 minute before cooking with it.');
+  else if (svc.label === 'QUALITY ADVISORY') tips.push('Boil tap water before cooking with it until the advisory ends.');
+  else if (problem) tips.push('Save stored water for cooking, bathing and washing hands.');
   if (svc.label === 'NO WATER' || svc.label === 'INTERMITTENT SUPPLY') tips.push('Keep faucets closed so water doesn\'t run when it comes back.');
   if (svc.advisory?.instructions && !svc.restored) tips.push(esc(svc.advisory.instructions));
   if (problem && alt.length) tips.push(`Get water at <a href="#/r/water-access">${esc(alt[0].name)}</a> (${esc(alt[0].hours)}).`);
@@ -198,9 +198,9 @@ function homeTips() {
 // The provider's Water Safety verdict in everyday words. Readings come from the monitoring
 // points before water reaches every zone, plus lab tests for germs.
 const SAFE_WORDS = {
-  safe: ['Yes, safe to drink', 'Tap water meets drinking-water standards. It is checked before it reaches your area.'],
+  safe: ['Yes, safe to use', 'Tap water meets the quality standards for daily household use. It is checked before it reaches your area.'],
   caution: ['Yes, but being watched', 'Water still meets health limits. One reading is slightly off, so your water provider is keeping an eye on it.'],
-  unsafe: ['No, do not drink tap water', 'Tests found a problem with the water. Use boiled or bottled water until your provider says it is safe again.'],
+  unsafe: ['No, limit use of tap water', 'Tests found a problem with the water. Use it only for flushing and cleaning until your provider says it is safe again.'],
 };
 const SAFE_SEV = { safe: 'normal', caution: 'warning', unsafe: 'critical' };
 const SAFE_CHECKS = [
@@ -215,20 +215,20 @@ const SAFE_POINTS = { 'WQ-1': 'At the treatment plant', 'WQ-2': 'Leaving the mai
 
 const passMark = (ok) => `<em class="${ok ? '' : 'is-bad'}">${ok ? 'Passed' : 'Problem found'}</em>`;
 
-// Shown under the service card only when tests say the water is not safe to drink.
+// Shown under the service card only when tests say the water is not safe to use.
 function homeSafetyAlert() {
   if (S.waterSafety(st()).verdict !== 'unsafe') return '';
   return alertBanner(
     'critical',
-    'Do not drink tap water right now',
-    'Water tests found a problem. Tap water is fine for flushing and cleaning, but boil it for at least 1 minute or use bottled water for drinking and cooking.',
+    'Limit use of tap water right now',
+    'Water tests found a problem. Tap water is fine for flushing and cleaning, but boil it for at least 1 minute before cooking and avoid using it to bathe infants.',
     `<a class="btn btn--sm btn--outline" href="#/r/water-safety">See test results</a>`
   );
 }
 
 // Plain description of each checkpoint, in the order water flows to homes.
 const SAFE_POINT_SUB = { 'WQ-1': 'Right after the water is cleaned and disinfected', 'WQ-2': 'As water leaves storage for the city', 'WQ-3': 'On the main line, just before the neighbourhood pipes' };
-const SAFE_FLAG = { safe: ['ok', 'Safe to drink'], caution: ['warn', 'Being watched'], unsafe: ['crit', 'Do not drink'] };
+const SAFE_FLAG = { safe: ['ok', 'Safe to use'], caution: ['warn', 'Being watched'], unsafe: ['crit', 'Limit use'] };
 
 function safetyMain() {
   const ws = S.waterSafety(st());
@@ -244,7 +244,7 @@ function safetyMain() {
   // Verdict banner — the same component as the operator Water Safety page.
   const verdict = `<section class="ws-verdict ws-verdict--${ws.verdict}">
     <span class="ws-v-ic">${icon(unsafe ? 'alert' : 'shield', 26)}</span>
-    <div class="ws-v-t"><span class="kpi-label">Is your water safe to drink?</span><strong>${title}</strong><span>${text}</span></div>
+    <div class="ws-v-t"><span class="kpi-label">Is your water safe to use?</span><strong>${title}</strong><span>${text}</span></div>
     <div class="ws-v-n">
       <div><strong>${nPass}/${results.length}</strong><span>${icon('check-circle', 15)} tests passed</span></div>
       <div><strong>${labOk ? 'None' : 'Found'}</strong><span>${icon('flask', 15)} harmful germs</span></div>
@@ -262,7 +262,7 @@ function safetyMain() {
     'Where we check your water',
     `<ol class="rflow">${stops
       .map((p, i) => `<li class="${p.ok ? '' : 'is-bad'}"><span class="rflow-ic">${icon(p.ic, 20)}<b>${i + 1}</b></span><strong>${p.name}</strong><small>${p.sub}</small>${passMark(p.ok)}</li>`)
-      .join('')}<li class="rflow-end"><span class="rflow-ic">${icon('home', 20)}</span><strong>Your home</strong><small>${unsafe ? 'Boil water before drinking' : 'Safe tap water'}</small></li></ol>`,
+      .join('')}<li class="rflow-end"><span class="rflow-ic">${icon('home', 20)}</span><strong>Your home</strong><small>${unsafe ? 'Limit use of tap water' : 'Safe for daily use'}</small></li></ol>`,
     { sub: 'In the order water travels from the treatment plant to your tap' }
   );
 
@@ -272,11 +272,11 @@ function safetyMain() {
   return `${verdict}
     ${journey}
     <div class="r-grid">
-      <div>${card('What we test for', `<ul class="safe-list safe-list--why">${checks}</ul>`, { sub: 'Five checks based on the Philippine drinking-water standards' })}</div>
+      <div>${card('What we test for', `<ul class="safe-list safe-list--why">${checks}</ul>`, { sub: 'Five checks based on the Philippine water quality standards' })}</div>
       <div>${card(
         unsafe ? 'What to do now' : 'If water is ever unsafe',
         `<ul class="tips">
-          <li>Boil water for at least 1 minute, or use bottled water, for drinking, cooking, making ice and brushing teeth.</li>
+          <li>Use tap water only for flushing and cleaning, and boil it for at least 1 minute before cooking or washing food.</li>
           <li>Tap water is still fine for flushing toilets, cleaning and washing clothes.</li>
           <li>We will tell you here and send a notification as soon as water is safe again.</li>
         </ul>`,
@@ -290,7 +290,7 @@ const waterSafetyPage = {
   regions: { main: safetyMain },
   render() {
     return `<div class="r-page">
-      <div class="page-h"><div><h1>Water Safety</h1><p class="page-sub">Is your tap water safe to drink? Here is what the tests show.</p></div>
+      <div class="page-h"><div><h1>Water Safety</h1><p class="page-sub">Is your tap water safe for daily use? Here is what the tests show.</p></div>
         <div class="page-a"><button class="btn btn--primary btn--sm" data-action="quick-report" data-type="color">${icon('flask', 15)} Report dirty or smelly water</button></div></div>
       <div data-region="main">${safetyMain()}</div>
     </div>`;
@@ -449,6 +449,11 @@ function rpSent(id) {
 }
 
 function reportWizard() {
+  // Residents without a valid ID are read-only (also enforced by the database rules).
+  if (!RESIDENT.verified)
+    return `<section class="card rp-card rp-locked" id="rp-wizard"><header class="card-h"><div><h2 class="card-t">Report a new problem</h2><p class="card-sub">Upload a valid ID to send reports.</p></div></header>
+      <div class="card-b"><p>To keep reports genuine, ${esc(UTILITY.name)} asks every reporter to verify their identity once. You can still view service status, advisories and water safety updates.</p>
+      <button class="btn btn--primary btn--sm" data-action="account-settings">Upload valid ID</button></div></section>`;
   if (lastSubmitted) return `<section class="card rp-card" id="rp-wizard">${rpSent(lastSubmitted)}</section>`;
   if (!draft) draft = newDraft();
   const d = draft;
@@ -545,9 +550,12 @@ register({
     rpFocus();
   },
   'rp-submit': (el) => busy(el, async () => {
+    if (!RESIDENT.verified) return rerender();
     const d = draft;
     const z = zoneAt(d.pin);
-    const r = await S.submitReport({
+    let r;
+    try {
+      r = await S.submitReport({
       type: d.type,
       description: d.description,
       zone: z.id,
@@ -557,7 +565,17 @@ register({
       y: d.pin.y,
       observedAt: fromLocalInput(d.observedAt) || Date.now(),
       photo: d.photo,
-    });
+      });
+    } catch (e) {
+      console.error(e);
+      const msg =
+        e?.code === 'permission-denied'
+          ? 'Your report was not sent. Reporting needs a valid ID on your account. Upload one in Account settings, then try again.'
+          : e?.code === 'unavailable' || e?.code === 'deadline-exceeded'
+            ? 'Your report was not sent because the server could not be reached. Check your connection and try again.'
+            : `Your report was not sent (${e?.code || e?.message || 'unknown error'}). Please try again.`;
+      return S.toast(msg, 'error');
+    }
     lastSubmitted = r.id;
     draft = null;
     go(location.hash); // redraw the card (now "Report sent") and the list below it
@@ -961,7 +979,7 @@ function outlookMain() {
 
   const store = fc.status === 'risk' || fc.status === 'critical';
   const tips = store
-    ? ['Store enough water for drinking and cooking for 1 day.', 'Avoid non-essential use, like washing vehicles or watering plants.', 'If you run out, see <a href="#/r/water-access">Where to Get Water</a>.']
+    ? ['Store enough water for 1 day of cooking, bathing and cleaning.', 'Avoid non-essential use, like washing vehicles or watering plants.', 'If you run out, see <a href="#/r/water-access">Where to Get Water</a>.']
     : ['No water shortages are expected from the city supply.', 'Local repairs can still affect your street. Check <a href="#/r/advisories">Advisories</a>.', 'Use water wisely during the busiest hours (6–8 AM and 6–8 PM).'];
 
   return `${hero}
@@ -1051,7 +1069,7 @@ const waterAccess = {
           <li>Clean containers with covers, like jugs or pails. Wash them first.</li>
           <li>Only take what your household needs, so there is enough for everyone.</li>
           <li>Seniors, persons with disability and families with babies may be served first.</li>
-          <li>Boil collected water for 1 minute before drinking if you are not sure it is clean.</li>
+          <li>Boil collected water for 1 minute before cooking with it if you are not sure it is clean.</li>
         </ul>`,
         { sub: 'Times show when your water provider last checked each place' }
       )}

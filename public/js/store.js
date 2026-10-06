@@ -101,7 +101,7 @@ export async function reset(notify = true) {
 
 export function commit(msg, kind) {
   save();
-  remote?.flush();
+  remote?.flush().catch((e) => toast(`Could not save to the server (${e.code || e.message})`, 'error'));
   emit('change');
   if (msg) toast(msg, kind);
 }
@@ -136,6 +136,7 @@ function emitSoon() {
 
 export function clearShared() {
   SHARED.forEach((c) => (state[c] = []));
+  state.responders = [];
   notifParts = {};
   state.publicStats = null;
 }
@@ -163,7 +164,23 @@ export function applyRemote(coll, docs, part) {
     state[coll] = docs.sort(SORT[coll]);
   }
   if (coll === 'reports' && me?.isProvider) processResidentResponses();
+  if ((coll === 'workOrders' || coll === 'incidents') && me?.isProvider) processResponderUpdates();
   emitSoon();
+}
+
+// Responder roster: from Firestore for staff, kept in local demo data otherwise.
+export function setResponders(list) {
+  state.responders = list.map((r) => ({ ...r, id: r.id || r.uid })).sort((a, b) => a.name.localeCompare(b.name));
+  emitSoon();
+}
+export const responders = () => state.responders || [];
+export function addResponderLocal(r) {
+  setResponders([...responders(), r]);
+  commit(`${r.name} added as a responder`);
+}
+export function removeResponderLocal(id) {
+  state.responders = responders().filter((r) => r.id !== id);
+  commit('Responder removed');
 }
 
 export function applyControl(d) {
@@ -324,7 +341,7 @@ function updateDerived(tele, simTime) {
 
 // ---------------------------------------------------------------- water safety (potability)
 // Simulated online analysers at three points before water reaches residents, checked against the
-// Philippine National Standards for Drinking Water (PNSDW 2017). Lab results (E. coli, coliform) are manual.
+// Limits from the Philippine National Standards for Drinking Water (PNSDW 2017), applied to the household supply. Lab results (E. coli, coliform) are manual.
 export const WQ_PARAMS = [
   { key: 'ph', label: 'pH', unit: '', min: 6.5, max: 8.5, d: 1, std: '6.5 – 8.5', why: 'Outside this range water can corrode pipes or make chlorine less effective.' },
   { key: 'turb', label: 'Turbidity', unit: 'NTU', max: 5, d: 2, std: '≤ 5 NTU', why: 'Cloudy water can shield germs from disinfection.' },
@@ -510,7 +527,8 @@ export function forecast(opts = {}, s = state) {
   let status = 'stable';
   if (crossH != null && crossH <= 6) status = 'critical';
   else if (crossH != null && crossH <= 24) status = 'risk';
-  else if (crossH != null || at(24) < 0.45) status = 'watch';
+  // Low storage now also counts as a warning, even if the forecast shows it refilling.
+  else if (crossH != null || at(24) < 0.45 || pts[0].pct < 0.42) status = 'watch';
   return { pts, crossH, minPct, now: pts[0].pct, at6: at(6), at12: at(12), at24: at(24), at48: at(48), status, avgDemand: sumDemand / n, avgProd: sumProd / n };
 }
 
@@ -591,11 +609,12 @@ export function forecastBand(s = state) {
   };
 }
 
+// Shortage early warning levels: Normal, Warning (two kinds), Critical.
 export const FORECAST_STATUS = {
-  stable: { label: 'STABLE', sev: 'normal', text: 'Expected water supply is sufficient based on current storage, production, and estimated demand.' },
-  watch: { label: 'WATCH', sev: 'info', text: 'Storage is expected to decline. Based on current conditions it stays above the minimum reserve within 24 hours.' },
-  risk: { label: 'SHORTAGE RISK', sev: 'warning', text: 'Based on current conditions, storage may reach the minimum reserve within 24 hours.' },
-  critical: { label: 'CRITICAL SHORTAGE RISK', sev: 'critical', text: 'Based on current conditions, storage may reach the minimum reserve within 6 hours.' },
+  stable: { label: 'NORMAL', sev: 'normal', text: 'Expected water supply is sufficient based on current storage, production, and estimated demand.' },
+  watch: { label: 'WARNING', sev: 'warning', text: 'Storage is low or expected to decline. Based on current conditions it stays above the minimum reserve within 24 hours.' },
+  risk: { label: 'WARNING', sev: 'warning', text: 'Based on current conditions, storage may reach the minimum reserve within 24 hours.' },
+  critical: { label: 'CRITICAL', sev: 'critical', text: 'Based on current conditions, storage may reach the minimum reserve within 6 hours.' },
 };
 
 export function forecastReasons(s = state) {
@@ -652,7 +671,7 @@ export function deriveAlerts(s = state) {
     .forEach((c) => a.push({ key: `cluster-${c.zone}`, sev: 'warning', cat: 'Reports', title: `New report cluster — ${zoneById(c.zone)?.short || c.zone}`, detail: `${c.reports.length} unreviewed resident reports`, link: '#/p/incidents' }));
   s.assets.filter((x) => x.status === 'offline').forEach((x) => a.push({ key: `offline-${x.id}`, sev: 'offline', cat: 'Equipment', title: `${x.type} offline — ${x.id}`, detail: `${x.name} is not reporting`, link: `#/p/assets/${x.id}` }));
   const ws = waterSafety(s);
-  if (ws.verdict === 'unsafe') a.push({ key: 'potability', sev: 'critical', cat: 'Water Quality', title: 'Water not safe to use', detail: `${ws.failures.length} reading${ws.failures.length > 1 ? 's' : ''} outside drinking-water limits`, link: '#/p/water-safety' });
+  if (ws.verdict === 'unsafe') a.push({ key: 'potability', sev: 'critical', cat: 'Water Quality', title: 'Water not safe to use', detail: `${ws.failures.length} reading${ws.failures.length > 1 ? 's' : ''} outside the limits for daily household use`, link: '#/p/water-safety' });
   else if (ws.verdict === 'caution') a.push({ key: 'potability', sev: 'warning', cat: 'Water Quality', title: 'Water quality needs attention', detail: ws.failures.map((f) => f.label).join(', '), link: '#/p/water-safety' });
   s.workOrders.filter((w) => w.status !== 'Completed' && w.target < Date.now()).forEach((w) => a.push({ key: `overdue-${w.id}`, sev: 'warning', cat: 'Work Orders', title: `Overdue work order — ${w.id}`, detail: w.description, link: `#/p/work-orders/${w.id}` }));
   return a.sort((x, y) => SEV_RANK[y.sev] - SEV_RANK[x.sev]);
@@ -797,9 +816,22 @@ export async function submitReport(data) {
     residentResponse: null,
   };
   state.reports.push(r);
+  const notes = state.notifications.length;
   notify('resident', { kind: 'report', title: 'Report submitted', body: `${id} (${reportTypeLabel(r.type)}) is awaiting provider review.`, link: `#/r/reports/${id}`, uid: me?.uid || null });
   if (me) notify('provider', { kind: 'Reports', title: `New resident report — ${zoneById(r.zone).short}`, body: `${id}: ${reportTypeLabel(r.type)}, ${r.location}`, link: '#/p/incidents', severity: 'info' });
-  commit();
+  save();
+  if (remote) {
+    // Wait for the server so the resident is told when the report did not go through.
+    try {
+      await remote.flush();
+    } catch (e) {
+      state.reports = state.reports.filter((x) => x !== r);
+      state.notifications.splice(0, state.notifications.length - notes);
+      emit('change');
+      throw e;
+    }
+  }
+  emit('change');
   return r;
 }
 
@@ -947,6 +979,8 @@ export async function createWorkOrder(data) {
   const wo = { id, photos: { before: null, after: null }, notes: [], completion: null, createdAt: now, status: data.team ? 'Assigned' : 'New', history: [{ status: 'New', at: now }], ...data };
   if (data.team) wo.history.push({ status: 'Assigned', at: now });
   state.workOrders.unshift(wo);
+  const r = data.responder && responders().find((x) => x.loginEmail === data.responder);
+  if (r) notify('responder', { uid: r.uid || null, responder: r.loginEmail, kind: 'assigned', title: `New work order ${id}`, body: `${data.priority} priority: ${data.description}`, link: `#/c/jobs/${id}` });
   const inc = state.incidents.find((i) => i.id === data.incidentId);
   if (inc) {
     inc.workOrderIds.push(id);
@@ -965,10 +999,21 @@ export function advanceWorkOrder(id, completion) {
   const next = WO_STEPS[i + 1];
   wo.status = next;
   wo.history.push({ status: next, at: Date.now() });
+  if (next === 'Completed') wo.completion = { at: Date.now(), ...completion };
+  // Responders may change only their work order; staff devices apply the effects (processResponderUpdates).
+  if (session()?.isResponder) {
+    wo.relay = [...(wo.relay || []), { status: next, at: Date.now(), by: session().profile?.name || 'Responder' }];
+    return commit(`${id} moved to ${next}`);
+  }
+  workOrderEffects(wo, next);
+  commit(`${id} → ${next}`);
+}
+
+// Incident, report and asset updates that follow a work order step.
+function workOrderEffects(wo, next, by) {
   const inc = state.incidents.find((x) => x.id === wo.incidentId);
-  if (inc) inc.timeline.push({ at: Date.now(), text: `${wo.id}: ${next}` });
+  if (inc) inc.timeline.push({ at: Date.now(), text: `${wo.id}: ${next}${by ? ` (${by})` : ''}` });
   if (next === 'Completed') {
-    wo.completion = { at: Date.now(), ...completion };
     if (inc) {
       // Repair clears the physical problem; readings recover on the next ticks.
       if (state.zoneIssues[inc.zone]) delete state.zoneIssues[inc.zone];
@@ -987,12 +1032,35 @@ export function advanceWorkOrder(id, completion) {
       if (asset.status === 'warning' || asset.status === 'offline') asset.status = 'normal';
     }
   }
-  commit(`${id} → ${next}`);
+}
+
+function processResponderUpdates() {
+  // wait until the linked incident has loaded, so its timeline and reports update too
+  const pending = state.workOrders.filter((w) => w.relay?.length && (!w.incidentId || state.incidents.some((i) => i.id === w.incidentId)));
+  if (!pending.length) return;
+  pending.forEach((wo) => {
+    wo.relay.forEach((r) => workOrderEffects(wo, r.status, r.by));
+    if (wo.status === 'Completed') notify('provider', { kind: 'wo', title: `${wo.id} completed by ${wo.relay[wo.relay.length - 1].by}`, body: wo.description, link: `#/p/work-orders/${wo.id}` });
+    delete wo.relay;
+  });
+  queueMicrotask(() => commit());
+}
+
+export function assignWorkOrder(id, r) {
+  const wo = state.workOrders.find((w) => w.id === id);
+  if (!wo || (wo.responder || null) === (r?.loginEmail || null)) return;
+  wo.responder = r ? r.loginEmail : null;
+  wo.team = r ? r.name : '';
+  if (r && wo.status === 'New') (wo.status = 'Assigned'), wo.history.push({ status: 'Assigned', at: Date.now() });
+  const inc = state.incidents.find((x) => x.id === wo.incidentId);
+  if (inc) inc.timeline.push({ at: Date.now(), text: `${wo.id} ${r ? `assigned to ${r.name}` : 'unassigned'}` });
+  if (r) notify('responder', { uid: r.uid || null, responder: r.loginEmail, kind: 'assigned', title: `New work order ${id}`, body: `${wo.priority} priority: ${wo.description}`, link: `#/c/jobs/${id}` });
+  commit(r ? `${id} assigned to ${r.name}` : `${id} unassigned`);
 }
 
 export function addWorkOrderNote(id, text) {
   const wo = state.workOrders.find((w) => w.id === id);
-  wo.notes.push({ at: Date.now(), by: wo.team || 'Technician', text });
+  wo.notes.push({ at: Date.now(), by: session()?.isResponder ? session().profile?.name || wo.team : wo.team || 'Technician', text });
   commit('Technician note added');
 }
 
@@ -1003,6 +1071,10 @@ export function setWorkOrderPhoto(id, which, dataUrl) {
 }
 
 // ---------------------------------------------------------------- advisories
+// Called after an advisory is published or changed (the backend uses it to trigger resident emails).
+let advisoryHook = null;
+export const onAdvisoryChange = (fn) => (advisoryHook = fn);
+
 export async function publishAdvisory(data) {
   const id = await nextId('adv', () => `ADV-${YEAR()}-${String(state.advSeq++).padStart(3, '0')}`);
   const now = Date.now();
@@ -1015,6 +1087,7 @@ export async function publishAdvisory(data) {
   }
   notifyZones(data.areas, { kind: 'advisory', title: `New water advisory: ${data.title}`, body: data.message, link: '#/r/advisories' });
   commit(`Advisory ${id} published to residents`);
+  advisoryHook?.(adv);
   return adv;
 }
 
@@ -1023,6 +1096,7 @@ export function updateAdvisory(id, patch) {
   Object.assign(a, patch, { updatedAt: Date.now() });
   notifyZones(a.areas, { kind: 'advisory', title: `Advisory updated: ${a.title}`, body: patch.message || a.message, link: '#/r/advisories' });
   commit('Advisory updated');
+  advisoryHook?.(a);
 }
 
 export function confirmAltWater(id, patch) {
@@ -1057,7 +1131,8 @@ export function updateEmergencyTank(id, patch) {
 }
 
 // ---------------------------------------------------------------- scenarios
-export async function applyScenario(key) {
+// opts.reports: false applies the readings only, without simulated resident reports.
+export async function applyScenario(key, { reports = true } = {}) {
   const s = state;
   const now = Date.now();
   // storage jumps are shared so every device's simulation starts from the same level
@@ -1087,7 +1162,7 @@ export async function applyScenario(key) {
     if (key === 'emergencySupply') s.emergency = { active: true, poolML: TANKER_POOL_ML };
     // A pressure problem brings one batch of simulated resident reports (demo mode).
     const issueZone = key === 'pipelineLeak' ? 'canlapwas' : key === 'lowPressure' ? 'maulong' : null;
-    if (issueZone) {
+    if (issueZone && reports) {
       const ids = remote ? await remote.allocIds('report', 8) : Array.from({ length: 8 }, () => undefined);
       ids.forEach((id) => spawnReport(issueZone, s.zoneIssues[issueZone].type, id));
     }

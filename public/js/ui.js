@@ -91,36 +91,82 @@ export function logo({ size = 34, tagline = true, light = false } = {}) {
 
 // Decorative city-by-the-bay scene for the provider sidebar (cathedral, government hall,
 // obelisk, monument, bunting, boat).
-export function cityScene() {
+// Sidebar city scene. It follows the current weather: sun or moon, drifting clouds, rain or a storm,
+// waves and the rowing boat moving faster as the wind picks up, and the bunting fluttering.
+// wx: { sky: 'clear' | 'partly' | 'cloudy' | 'rain' | 'storm', wind: km/h, night: boolean }
+export function cityScene(wx = {}) {
+  const sky = wx.sky || 'clear';
+  const wind = wx.wind || 0;
+  const night = !!wx.night;
+  const wet = sky === 'rain' || sky === 'storm';
+  const gust = sky === 'storm' ? 3 : wind >= 25 ? 2 : wind >= 10 ? 1 : 0; // calm, breezy, windy, stormy
+  const vars = [
+    `--cs-wave:${[5, 3.6, 2.4, 1.6][gust]}s`,
+    `--cs-bob:${[1.2, 1.8, 2.6, 3.4][gust]}px`,
+    `--cs-tilt:${[1.5, 2.5, 4, 6][gust]}deg`,
+    `--cs-row:${[2.4, 2, 1.7, 1.4][gust]}s`,
+    `--cs-flag:${[2.6, 1.6, 0.9, 0.55][gust]}s`,
+    `--cs-cloud:${[60, 42, 28, 18][gust]}s`,
+    `--cs-rain:${sky === 'storm' ? 0.45 : 0.7}s`,
+  ].join(';');
   const ink = '#1F2A3A';
   const s = `stroke="${ink}" stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"`;
   const flags = [[52, 40], [62, 43], [72, 45], [82, 46], [92, 46], [102, 44], [112, 41], [122, 37], [132, 33]];
   const fc = ['#F97316', '#1F2A3A', '#FDBA74', '#3B82F6'];
   const ticks = Array.from({ length: 37 }, (_, i) => `<path d="M${4 + i * 8} 93v3" stroke="#B9A79B" stroke-width="1"/>`).join('');
-  const waves = [[14, 106], [62, 116], [176, 108], [226, 117], [270, 105]].map(([x, y]) => `<path d="M${x} ${y}q5-3 10 0t10 0" fill="none" stroke="#9DBCE0" stroke-width="1.2" stroke-linecap="round"/>`).join('');
-  return `<svg class="city-scene" viewBox="0 24 300 100" aria-hidden="true" focusable="false">
+  // Two copies of the wave row, 150 px apart, so the drift loops seamlessly.
+  const waveRow = [[14, 106], [62, 116], [106, 110], [176, 108], [226, 117], [270, 105]];
+  const waves = [0, 150, 300]
+    .map((dx) => waveRow.map(([x, y]) => `<path d="M${x + dx} ${y}q5-3 10 0t10 0" fill="none" stroke="${wet ? '#88A9CC' : '#9DBCE0'}" stroke-width="1.2" stroke-linecap="round"/>`).join(''))
+    .join('');
+  const cloud = (x, y, k, cls) => `<path class="${cls}" d="M${x} ${y}h${22 * k}a${6 * k} ${6 * k} 0 0 0 0-${12 * k} ${8 * k} ${8 * k} 0 0 0-${15 * k}-${3 * k} ${6 * k} ${6 * k} 0 0 0-${9 * k} ${5 * k} ${4 * k} ${4 * k} 0 0 0 ${2 * k} ${10 * k}z" fill="${sky === 'storm' ? '#C9D1DB' : wet ? '#DCE2EA' : '#F4F6F9'}" stroke="${sky === 'storm' ? '#8E9AAA' : '#B8C2CE'}" stroke-width="1"/>`;
+  const clouds =
+    sky === 'clear'
+      ? ''
+      : sky === 'partly'
+        ? cloud(212, 50, 0.9, 'cs-cloud')
+        : `${cloud(152, 48, 0.85, 'cs-cloud')}${cloud(204, 52, 0.85, 'cs-cloud cs-cloud--b')}${wet ? cloud(270, 40, 0.8, 'cs-cloud cs-cloud--c') : ''}`;
+  const sunMoon =
+    sky === 'clear' || sky === 'partly'
+      ? night
+        ? `<g class="cs-moon"><circle cx="276" cy="38" r="6" fill="#F4F6F9" stroke="#B8C2CE" stroke-width="1"/><circle cx="279" cy="36" r="5" fill="#fff"/></g>`
+        : `<g class="cs-sun"><circle cx="276" cy="38" r="5.5" fill="#FDBA74"/>${[0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<path d="M276 30v-3" stroke="#FDBA74" stroke-width="1.4" stroke-linecap="round" transform="rotate(${a} 276 38)"/>`).join('')}</g>`
+      : '';
+  const drops = (n, seed) =>
+    Array.from({ length: n }, (_, k) => {
+      const x = (k * 37 + seed * 13) % 300;
+      const y = 24 + ((k * 53 + seed * 29) % 70);
+      return `<path d="M${x} ${y}l-2 6" stroke="#8FA6BF" stroke-width="1" stroke-linecap="round"/>`;
+    }).join('');
+  const rain = wet ? `<g class="cs-rain">${drops(sky === 'storm' ? 34 : 22, 1)}</g><g class="cs-rain cs-rain--b">${drops(sky === 'storm' ? 34 : 22, 2)}</g>` : '';
+  const bolt = sky === 'storm' ? `<path class="cs-bolt" d="M178 40l-6 12h5l-4 10 10-14h-5l4-8z" fill="#FDE68A" stroke="#E5B93B" stroke-width=".8"/>` : '';
+  const water = night ? '#CFDDEC' : wet ? '#D3E1EF' : '#DCEAF7';
+  return `<svg class="city-scene cs--${sky}${night ? ' cs--night' : ''}" style="${vars}" viewBox="0 24 300 100" aria-hidden="true" focusable="false">
     <defs>
       <clipPath id="cs-clip"><rect width="300" height="124" rx="12"/></clipPath>
     </defs>
     <g clip-path="url(#cs-clip)">
-      <rect y="96" width="300" height="28" fill="#DCEAF7"/>${waves}
+      ${night || wet ? `<rect y="24" width="300" height="70" fill="${night ? '#EEF2F8' : sky === 'storm' ? '#EDF0F4' : '#F3F5F8'}"/>` : ''}
+      ${sunMoon}${clouds}${bolt}
+      <rect y="96" width="300" height="28" fill="${water}"/>
+      <g class="cs-waves">${waves}</g>
       <rect y="92" width="300" height="2" fill="#C9B6A9"/>${ticks}
       <!-- cathedral -->
       <path d="M40 27v13M35 32h10" ${s} fill="none"/>
       <path d="M12 57 40 40l28 17Z" fill="#fff" ${s}/>
       <rect x="16" y="57" width="48" height="36" fill="#fff" ${s}/>
       <circle cx="40" cy="50" r="3.4" fill="#fff" ${s}/>
-      ${[20, 26, 51, 57].map((x) => `<rect x="${x}" y="62" width="3" height="27" rx="1" fill="#FDE6D8" ${s}/>`).join('')}
+      ${[20, 26, 51, 57].map((x) => `<rect x="${x}" y="62" width="3" height="27" rx="1" fill="${night ? '#FCD9A8' : '#FDE6D8'}" ${s}/>`).join('')}
       <path d="M34 93V78a6 6 0 0 1 12 0v15Z" fill="#374151"/>
       <!-- bunting -->
       <path d="M44 37Q92 52 140 31" fill="none" stroke="${ink}" stroke-width="1"/>
-      ${flags.map(([x, y], i) => `<path d="M${x - 3.2} ${y}h6.4L${x} ${y + 7}Z" fill="${fc[i % 4]}"/>`).join('')}
+      ${flags.map(([x, y], i) => `<path class="cs-flag" style="animation-delay:-${(i * 0.17).toFixed(2)}s" d="M${x - 3.2} ${y}h6.4L${x} ${y + 7}Z" fill="${fc[i % 4]}"/>`).join('')}
       <!-- government hall -->
-      <path d="M125 52V36" ${s}/><path d="M125 36h12l-3 4 3 4h-12Z" fill="#F97316"/>
+      <path d="M125 52V36" ${s}/><path class="cs-pennant" d="M125 36h12l-3 4 3 4h-12Z" fill="#F97316"/>
       <path d="M98 66 125 52l27 14Z" fill="#fff" ${s}/>
       <rect x="84" y="66" width="82" height="27" fill="#fff" ${s}/>
-      ${[103, 112, 121, 130, 139].map((x) => `<rect x="${x}" y="69" width="4.5" height="24" fill="#FDE6D8" ${s}/>`).join('')}
-      ${[[88, 71], [88, 81], [154, 71], [154, 81]].map(([x, y]) => `<rect x="${x}" y="${y}" width="7" height="6" fill="#fff" ${s}/>`).join('')}
+      ${[103, 112, 121, 130, 139].map((x) => `<rect x="${x}" y="69" width="4.5" height="24" fill="${night ? '#FCD9A8' : '#FDE6D8'}" ${s}/>`).join('')}
+      ${[[88, 71], [88, 81], [154, 71], [154, 81]].map(([x, y]) => `<rect x="${x}" y="${y}" width="7" height="6" fill="${night ? '#FCD9A8' : '#fff'}" ${s}/>`).join('')}
       <!-- obelisk -->
       <path d="M192.5 89 194.5 45 196.5 40.5 198.5 45 200.5 89Z" fill="#fff" ${s}/>
       <rect x="188" y="89" width="17" height="4" fill="#fff" ${s}/>
@@ -131,10 +177,14 @@ export function cityScene() {
       <rect x="230.5" y="72" width="21" height="9" fill="#FDBA74" ${s}/>
       ${[234, 239.5, 245].map((x) => `<path d="M${x} 73v7" stroke="${ink}" stroke-width="1"/>`).join('')}
       <rect x="226" y="81" width="30" height="12" fill="#fff" ${s}/>
-      <!-- boat -->
-      <path d="M130 88v15" ${s}/><path d="M130 89.5v13h-10Z" fill="#fff" ${s}/>
-      <path d="M110 103h40l-6 7.5h-28Z" fill="#F97316" ${s}/>
-      <path d="M106 108l8-3M154 108l-8-3" ${s}/>
+      <!-- boat: drifts across the water, bobs on the waves, oars row -->
+      <g class="cs-boat"><g class="cs-bob">
+        <path d="M130 88v15" ${s}/><path class="cs-sail" d="M130 89.5v13h-10Z" fill="#fff" ${s}/>
+        <path d="M110 103h40l-6 7.5h-28Z" fill="#F97316" ${s}/>
+        <path class="cs-oar cs-oar--l" d="M106 108l8-3" ${s}/>
+        <path class="cs-oar cs-oar--r" d="M154 108l-8-3" ${s}/>
+      </g></g>
+      ${rain}
     </g>
   </svg>`;
 }

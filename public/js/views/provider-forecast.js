@@ -51,6 +51,55 @@ function historyAndForecast(fc, id, { h = 260, forecastSeries } = {}) {
   });
 }
 
+// ---------------------------------------------------------------- demand forecast
+function demandForecastCard(fc) {
+  const s = st();
+  const hist = s.history.demand.filter((_, i, a) => (a.length - 1 - i) % 6 === 0); // 30-min samples
+  const htimes = s.history.t.filter((_, i, a) => (a.length - 1 - i) % 6 === 0);
+  const fpts = fc.pts.filter((p) => p.h > 0 && p.h <= 48);
+  const n = hist.length + fpts.length;
+  const nowI = hist.length - 1;
+  const normal = [...htimes.map((t) => S.BASE_DEMAND * S.diurnal(t)), ...fpts.map((p) => S.BASE_DEMAND * S.diurnal(s.tele.simTime + p.h * 3600000))];
+  const next24 = fpts.filter((p) => p.h <= 24);
+  const avg = next24.reduce((a, p) => a + p.demand, 0) / (next24.length || 1);
+  const peak = next24.reduce((a, p) => (p.demand > a.demand ? p : a), next24[0] || { demand: 0, h: 0 });
+  const vs = ((avg - S.BASE_DEMAND) / S.BASE_DEMAND) * 100;
+  const imp = dayImpacts()[0];
+  const drivers = [
+    s.factors.demandMult !== 1 ? `Demand factor ${s.factors.demandMult > 1 ? '+' : '−'}${fmt(Math.abs(s.factors.demandMult - 1) * 100, 0)}% (current conditions)` : 'Normal daily pattern',
+    imp && imp.demandPct ? `Weather ${signed(imp.demandPct)} (forecast high ${fmt(imp.tmax, 0)} °C)` : 'No weather adjustment today',
+    S.leakLoss() ? `Estimated losses ${fmt(S.leakLoss(), 2)} ML/day from open leaks` : 'No extra losses from leaks',
+  ];
+  const chart = lineChart({
+    id: 'fc-demand',
+    label: 'Water demand: past 24 hours and 48-hour forecast',
+    series: [
+      { name: 'Measured demand (simulated)', color: '#1E3A5F', values: [...hist, ...fpts.map(() => null)], area: true },
+      { name: 'Forecast demand', color: '#5B7BA3', values: [...hist.map((v, i) => (i === nowI ? v : null)), ...fpts.map((p) => p.demand)], dash: true },
+      { name: 'Normal pattern', color: '#B8C2CE', values: normal, dash: true },
+    ],
+    labels: [...hist.map((_, i) => `${((i - nowI) / 2).toFixed(1)} h`), ...fpts.map((p) => `+${p.h} h`)],
+    xTicks: [{ i: 0, label: '−24 h' }, { i: nowI, label: 'Now' }, { i: nowI + 48, label: '+24 h' }, { i: n - 1, label: '+48 h' }],
+    nowIndex: nowI,
+    bands: [{ from: nowI, to: n - 1, color: '#F5F7FA', label: 'FORECAST' }],
+    legend: true,
+    yMin: 0,
+    yFmt: (v) => fmt(v, 1),
+    h: 230,
+  });
+  return card(
+    'Demand forecast',
+    `<dl class="fcd-kv">
+      <div><dt>Next 24 hours, average</dt><dd>${fmt(avg, 2)} ML/day</dd><span>${signed(vs)} vs normal</span></div>
+      <div><dt>Forecast peak</dt><dd>${fmt(peak.demand, 2)} ML/day</dd><span>in about ${fmt(peak.h, 0)} hours</span></div>
+      <div><dt>Production capacity</dt><dd>${fmt(S.productionCapacity(), 2)} ML/day</dd><span>${S.productionCapacity() >= avg ? 'Enough for expected demand' : 'Below expected demand'}</span></div>
+    </dl>
+    ${chart}
+    <ul class="fcd-drivers">${drivers.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>`,
+    { sub: 'ML/day. Daily usage pattern adjusted for current conditions and the weather outlook', actions: src('FORECAST') }
+  );
+}
+
 // ---------------------------------------------------------------- FORECAST
 const sentence = (t) => t.charAt(0) + t.slice(1).toLowerCase();
 const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v), 0)}%`;
@@ -175,6 +224,7 @@ function forecastMain() {
     <p class="fine">Forecasts are projections based on current conditions${S.weatherActive() ? ' and the weather outlook' : ''}. They are not guaranteed.</p>`
   )}
   ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Poblacion 13 reservoir level, past 24 hours (simulated) and next 48 hours (forecast)${S.forecastBand() ? '. Shaded area shows the likely range from past forecast errors.' : ''}` })}
+  ${demandForecastCard(fc)}
   ${weatherCard()}
   ${accuracyCard()}
   ${card(

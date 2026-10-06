@@ -10,3 +10,7 @@ export const FIREBASE_CONFIG = {
   messagingSenderId: '541185771911',
   appId: '1:541185771911:web:9ab188400e6277cae1eb22',
 };
+
+// Google Apps Script web app that emails residents about advisories (scripts/advisory-email).
+// Opening it only asks the script to check for advisory changes now; set to '' to disable.
+export const ADVISORY_EMAIL_URL = 'https://script.google.com/macros/s/AKfycbxbtn2pztasTKTBJZAEqftr0cnF1vwfrmfSOYyFpheR2VUUouUil5dYgLTORahi_B1J0w/exec';

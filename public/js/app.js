@@ -1,16 +1,20 @@
 // SAMAR-AGOS application shell: routing, layouts, login, notifications, demo control.
 import * as S from './store.js';
 import * as B from './backend.js';
-import { RESIDENT, PROVIDER_USER, SCENARIOS, UTILITY, ZONES, BARANGAY_LL, zoneOfBarangay } from './data.js';
-import { icon, logoMark, cityScene, status, register, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
+import { RESIDENT, PROVIDER_USER, RESPONDER_USER, SCENARIOS, DEMO_FEATURES, SCENARIO_SHOWS, UTILITY, ZONES, BARANGAY_LL, zoneOfBarangay } from './data.js';
+import { icon, logoMark, cityScene, status, register, registerInputs, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
 import { installChartHover, measureCharts } from './charts.js';
 import { syncMaps } from './livemap.js';
-import { esc, relTime, fmtDateTime, toXY } from './util.js';
+import { esc, relTime, fmtDate, fmtDateTime, toXY, readImage } from './util.js';
 import { residentViews } from './views/resident.js';
+import { weatherState, describe as describeWeather } from './weather.js';
 import { providerViews } from './views/provider.js';
+import { responderViews } from './views/responder.js';
 import { setWoFilter } from './views/provider-incidents.js';
 
 S.load();
+// Offline demo: one sample responder so work orders can be assigned and the dashboard tried.
+if (!B.FB_ENABLED && !S.responders().length) S.setResponders([{ ...RESPONDER_USER }]);
 installDelegation();
 installChartHover();
 
@@ -48,6 +52,7 @@ const PRO_NAV = [
   { group: 'Monitor', items: [
     { id: 'overview', label: 'Overview', icon: 'grid' },
     { id: 'operations', label: 'Operations', icon: 'activity' },
+    { id: 'leak-detection', label: 'Leak Detection', icon: 'droplets' },
     { id: 'water-safety', label: 'Water Safety', icon: 'shield' },
     { id: 'forecast', label: 'Forecast', icon: 'forecast' },
   ] },
@@ -62,6 +67,16 @@ const PRO_NAV = [
   ] },
 ];
 
+const RSP_NAV = [
+  { group: 'Field Work', items: [
+    { id: 'jobs', label: 'My Work Orders', icon: 'wrench', count: () => S.getState().workOrders.filter((w) => w.responder === RESPONDER_USER.loginEmail && w.status !== 'Completed').length },
+  ] },
+];
+// Each role has its own area of the app: r = resident, p = provider, c = field responder (crew).
+const AREA = { resident: 'r', provider: 'p', responder: 'c' };
+const HOME = { r: '#/r/home', p: '#/p/overview', c: '#/c/jobs' };
+const homeOf = (rl) => HOME[AREA[rl]] || '#/r/home';
+
 // ---------------------------------------------------------------- routing
 function parse() {
   const h = location.hash.replace(/^#\/?/, '');
@@ -74,16 +89,16 @@ function render() {
   if (B.FB_ENABLED) {
     if (!B.getSession()) return renderAuth();
     if (!role) return; // still syncing
-    if (area === 'login' || !area) return go(role === 'resident' ? '#/r/home' : '#/p/overview');
+    if (area === 'login' || !area) return go(homeOf(role));
   }
   if (!role || area === 'login' || !area) return renderLogin();
-  if (area === 'r' && role !== 'resident') return go(`#/p/overview`);
-  if (area === 'p' && role !== 'provider') return go(`#/r/home`);
+  if (AREA[role] !== area) return go(homeOf(role));
   // Maintenance now lives inside Work Orders; keep old links working.
   if (area === 'p' && page === 'maintenance') return setWoFilter('maintenance'), go('#/p/work-orders');
-  const views = area === 'r' ? residentViews : providerViews;
-  const pg = page || (area === 'r' ? 'home' : 'overview');
-  const view = views[id && views[`${pg}/:id`] ? `${pg}/:id` : pg] || views[area === 'r' ? 'home' : 'overview'];
+  const views = area === 'r' ? residentViews : area === 'c' ? responderViews : providerViews;
+  const first = { r: 'home', p: 'overview', c: 'jobs' }[area];
+  const pg = page || first;
+  const view = views[id && views[`${pg}/:id`] ? `${pg}/:id` : pg] || views[first];
   const params = { id, page: pg };
   const key = `${area}/${pg}/${id || ''}`;
   const sameView = current && current.key === key;
@@ -142,6 +157,11 @@ function renderLogin() {
             <span class="role-txt"><strong>Water Provider / Operator</strong><span>${esc(PROVIDER_USER.name)}, ${esc(UTILITY.name)}</span><em>Monitor operations, investigate incidents, dispatch crews</em></span>
             ${icon('chev-r', 20)}
           </button>
+          <button class="role-card" data-action="login" data-role="responder">
+            <span class="role-ic role-ic--navy">${icon('wrench', 22)}</span>
+            <span class="role-txt"><strong>Field Responder</strong><span>${esc(RESPONDER_USER.name)}, ${esc(UTILITY.name)}</span><em>Receive work orders and record repairs in the field</em></span>
+            ${icon('chev-r', 20)}
+          </button>
         </div>
         <div class="demo-note">${icon('info', 16)}<span><strong>Offline mode — no database connected.</strong> Reference data comes from Catbalogan Water District’s published figures; live readings are simulated.</span></div>
       </div>
@@ -189,7 +209,7 @@ function renderAuth() {
         <div class="auth-head">
           <span class="auth-pill">Water Service Monitoring</span>
           <h2>${signup ? 'Create your account' : 'Welcome back'}</h2>
-          <p>${signup ? 'Register to check service status, get advisories, and report problems.' : 'Sign in to access service status, reports, and advisories.'}</p>
+          <p>${signup ? 'Step 1 of 2: your sign-in details.' : 'Sign in to access service status, reports, and advisories.'}</p>
         </div>
         <button type="button" class="btn-google" data-action="auth-google">${GOOGLE_G}<span>Continue with Google</span></button>
         <div class="auth-or"><span>or with email</span></div>
@@ -207,8 +227,8 @@ function renderAuth() {
             <label for="au-pw2">Confirm password <span class="req">*</span></label>
             <div class="auth-pw"><input type="password" id="au-pw2" autocomplete="new-password" required/><button type="button" class="auth-show" data-action="auth-showpw" data-for="au-pw2" aria-pressed="false">Show</button></div>
           </div>` : ''}
-          ${authError ? `<div class="auth-err" role="alert">${icon('alert', 15)}<span>${esc(authError)}</span></div>` : ''}
-          <button type="submit" class="auth-submit">${signup ? 'Create account' : 'Sign in'}</button>
+          ${authError ? `<div class="auth-err" role="alert"><span>${esc(authError)}</span></div>` : ''}
+          <button type="submit" class="auth-submit">${signup ? 'Next' : 'Sign in'}</button>
         </form>
         <div class="auth-alt">
           ${signup ? `<span>Already have an account?</span> <button class="linkish" data-action="auth-mode" data-mode="signin">Sign in</button>` : `<span>Don't have an account?</span> <button class="linkish" data-action="auth-mode" data-mode="signup">Create account</button>`}
@@ -248,7 +268,10 @@ function profileFields(p = {}) {
       ${field('Barangay', `<select id="pf-brgy">${barangayOptions(p.barangay || 'Mercedes')}</select>`, { id: 'pf-brgy', req: true })}
       ${field('Purok / street', `<input id="pf-addr" value="${esc(p.address || '')}" placeholder="e.g. Purok 3"/>`, { id: 'pf-addr', optional: true })}
     </div>
-    ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true, hint: 'Used only by your water provider for service updates.' })}`;
+    <div class="grid-2">
+      ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true })}
+      ${field('Meter number', `<input id="pf-meter" value="${esc(p.meter || '')}" placeholder="As printed on your water bill"/>`, { id: 'pf-meter', optional: true })}
+    </div>`;
 }
 // Staff settings omit barangay and address; only fields present on the form are read.
 const readProfileFields = () => {
@@ -256,22 +279,45 @@ const readProfileFields = () => {
   const d = { name: (v('pf-name') || '').trim(), phone: (v('pf-phone') || '').trim() };
   if (v('pf-brgy') != null) d.barangay = v('pf-brgy');
   if (v('pf-addr') != null) d.address = v('pf-addr').trim();
+  if (v('pf-meter') != null) d.meter = v('pf-meter').trim();
   return d;
 };
 
+// ---------------------------------------------------------------- account type and valid ID
+// A profile is complete once the second sign-up step was filled in (Google sign-ups included).
+const profileComplete = (p) => !!(p && p.name && (p.barangay || p.role === 'responder'));
+
+let pendingId = null; // data URL of the chosen ID photo during onboarding or settings
+function idUpload(p = {}) {
+  const done = p.idSubmitted && !pendingId;
+  return `<div class="id-up" id="id-up">
+    <div class="id-up-h"><span class="field-l">Valid ID <span class="opt">(optional)</span></span>${done ? `<span class="id-up-ok">Submitted ${fmtDate(p.idUploadedAt)}</span>` : ''}</div>
+    ${pendingId ? `<div class="id-up-prev"><img src="${pendingId}" alt="Selected valid ID"/><button type="button" class="btn btn--ghost btn--sm" data-action="id-remove">Remove</button></div>` : ''}
+    <label class="id-up-btn"><input type="file" accept="image/*" data-change="id-file" hidden/>${pendingId ? 'Choose a different photo' : done ? 'Replace ID photo' : 'Upload a photo of your ID'}</label>
+    <p class="field-h">PhilSys national ID, driver's license, passport, UMID, voter's ID or barangay ID. Without a valid ID you can still view service updates, but you cannot send reports.</p>
+  </div>`;
+}
+const paintIdUpload = () => {
+  const box = document.getElementById('id-up');
+  if (box) box.outerHTML = idUpload(B.getSession()?.profile || {});
+};
+
+// Step 2 of sign-up (also shown after a first Google sign-in): personal details and valid ID.
 function renderOnboarding() {
   current = null;
   const ses = B.getSession();
-  document.title = 'Set up your profile | SAMAR-AGOS';
+  const p = ses.profile || {};
+  document.title = 'Your information | SAMAR-AGOS';
   app.innerHTML = `<div class="login">${brandPanel()}
-    <section class="login-panel"><div class="login-box">
-      <h2>Set up your profile</h2>
-      <p class="muted">Signed in as ${esc(ses.email)}. Your barangay tells us which advisories and service updates apply to you.</p>
+    <section class="login-panel"><div class="login-box onb-box">
+      <ol class="onb-steps"><li class="is-done"><span>1</span>Account</li><li class="is-on"><span>2</span>Your information</li></ol>
+      <div class="auth-head"><h2>Your information</h2><p>Signed in as ${esc(ses.email)}.</p></div>
       <form class="form" id="onb-form" novalidate>
-        ${profileFields()}
+        ${profileFields(p)}
+        ${idUpload(p)}
         ${!ses.accessExists ? `<label class="chk onb-admin"><input type="checkbox" id="onb-admin"/> <span><strong>I'm setting up SAMAR-AGOS for our water utility.</strong> Make this account the first staff administrator (only the first account can do this).</span></label>` : ''}
         <div class="auth-err" role="alert" hidden></div>
-        <button type="submit" class="btn btn--primary btn--lg">Continue</button>
+        <button type="submit" class="auth-submit">${pendingId ? 'Finish' : 'Finish without ID'}</button>
       </form>
       <div class="auth-alt"><button class="linkish" data-action="logout">Use a different account</button></div>
     </div></section></div>`;
@@ -280,10 +326,12 @@ function renderOnboarding() {
     e.preventDefault();
     const data = readProfileFields();
     const errBox = form.querySelector('.auth-err');
-    if (!data.name) return (errBox.hidden = false), (errBox.innerHTML = `${icon('alert', 15)}<span>Please enter your full name.</span>`);
+    if (!data.name) return (errBox.hidden = false), (errBox.innerHTML = '<span>Please enter your full name.</span>');
     busy(form.querySelector('button[type=submit]'), async () => {
       await B.saveProfile(data);
+      if (pendingId) await B.saveValidId(pendingId);
       if (document.getElementById('onb-admin')?.checked) await B.claimProviderAccess();
+      pendingId = null;
       await enterApp();
     });
   });
@@ -314,10 +362,55 @@ function applyProfile(ses) {
     y: home.y,
     phone: p.phone || 'Not provided',
     account: '—',
-    meter: '—',
+    meter: p.meter || '—',
     email: ses.email,
+    verified: !!p.idSubmitted,
   });
   Object.assign(PROVIDER_USER, { name, initials, role: ses.isProvider ? 'Water utility staff' : 'Resident', email: ses.email });
+  if (ses.isResponder) Object.assign(RESPONDER_USER, { name, initials, loginEmail: ses.email, phone: p.phone || '' });
+}
+
+// Responder accounts start with a temporary password; the first sign-in asks for a new one.
+function renderSetPassword() {
+  current = null;
+  const ses = B.getSession();
+  document.title = 'Set your password | SAMAR-AGOS';
+  const pw = (id, label, hint = '') => field(label, `<div class="auth-pw"><input type="password" id="${id}" autocomplete="new-password"/><button type="button" class="auth-show" data-action="auth-showpw" data-for="${id}" aria-pressed="false">Show</button></div>`, { id, req: true, hint });
+  app.innerHTML = `<div class="login">${brandPanel()}
+    <section class="login-panel"><div class="login-box onb-box">
+      <div class="auth-head"><h2>Set your password</h2><p>Welcome, ${esc(ses.profile?.name || '')}. You signed in with a temporary password. Choose your own password to continue.</p></div>
+      <form class="form" id="sp-form" novalidate>
+        ${field('Sign-in email', `<input value="${esc(ses.email)}" disabled/>`, {})}
+        ${pw('sp-new', 'New password', 'At least 8 characters.')}
+        ${pw('sp-new2', 'Confirm new password')}
+        <div class="auth-err" role="alert" hidden></div>
+        <button type="submit" class="auth-submit">Save and continue</button>
+      </form>
+      <div class="auth-alt"><button class="linkish" data-action="logout">Sign out</button></div>
+    </div></section></div>`;
+  const form = document.getElementById('sp-form');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const next = document.getElementById('sp-new').value;
+    const errBox = form.querySelector('.auth-err');
+    const fail = (m) => ((errBox.hidden = false), (errBox.innerHTML = `<span>${esc(m)}</span>`));
+    if (next.length < 8) return fail('Use a password with at least 8 characters.');
+    if (next !== document.getElementById('sp-new2').value) return fail('The passwords do not match.');
+    busy(form.querySelector('button[type=submit]'), async () => {
+      try {
+        await B.setNewPassword(next);
+        await enterApp();
+      } catch (err) {
+        fail(B.authMessage(err));
+      }
+    });
+  });
+}
+
+// A responder account whose access was removed by staff.
+function renderNoAccess() {
+  current = null;
+  app.innerHTML = `<div class="splash">${logoMark(44)}<p>Your responder access was removed by the water utility. Contact your supervisor if you think this is a mistake.</p><button class="btn btn--outline" data-action="logout">Sign out</button></div>`;
 }
 
 async function enterApp() {
@@ -326,10 +419,9 @@ async function enterApp() {
   renderSplash('Syncing with the SAMAR-AGOS database…');
   await B.startSync();
   const pref = localStorage.getItem(ROLE_KEY);
-  role = ses.isProvider ? (pref === 'resident' ? 'resident' : 'provider') : 'resident';
+  role = ses.isProvider ? (pref === 'resident' ? 'resident' : 'provider') : ses.isResponder ? 'responder' : 'resident';
   const { area } = parse();
-  const want = role === 'resident' ? 'r' : 'p';
-  if (area !== want) go(want === 'r' ? '#/r/home' : '#/p/overview');
+  if (area !== AREA[role]) go(homeOf(role));
   else render();
 }
 
@@ -353,7 +445,9 @@ async function boot() {
     renderSplash('Loading your account…');
     try {
       const ses = await B.loadSession(user);
-      if (!ses.profile) return renderOnboarding();
+      if (ses.profile?.role === 'responder' && !ses.isResponder && !ses.isProvider) return renderNoAccess();
+      if (ses.isResponder && ses.profile?.mustChangePassword) return renderSetPassword();
+      if (!profileComplete(ses.profile)) return renderOnboarding();
       await enterApp();
     } catch (e) {
       console.error(e);
@@ -373,7 +467,7 @@ function openProfileEditor() {
 let acctTab = 'profile';
 function accountSettingsBody() {
   const ses = B.getSession();
-  const staff = !!ses?.isProvider && role === 'provider';
+  const staff = (!!ses?.isProvider && role === 'provider') || !!ses?.isResponder;
   const p = ses?.profile || {};
   const tab = (id, label) => `<button class="${acctTab === id ? 'is-on' : ''}" data-action="acct-tab" data-id="${id}" aria-pressed="${acctTab === id}">${label}</button>`;
   const pwField = (id, label, hint = '') => field(label, `<div class="auth-pw"><input type="password" id="${id}" autocomplete="${id.endsWith('cur') ? 'current-password' : 'new-password'}"/><button type="button" class="auth-show" data-action="auth-showpw" data-for="${id}" aria-pressed="false">Show</button></div>`, { id, req: true, hint });
@@ -384,7 +478,7 @@ function accountSettingsBody() {
       staff
         ? `${field('Full name', `<input id="pf-name" value="${esc(p.name || '')}" autocomplete="name" required/>`, { id: 'pf-name', req: true })}
            ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true })}`
-        : profileFields(p)
+        : `${profileFields(p)}${idUpload(p)}`
     }<div class="as-a"><button class="btn btn--primary btn--sm" data-action="profile-save">Save profile</button></div></form>`;
   else if (acctTab === 'email')
     body = !B.usesPassword()
@@ -404,7 +498,8 @@ function accountSettingsBody() {
         ${pwField('ap-new2', 'Confirm new password')}
         <div class="auth-err" role="alert" hidden></div>
         <div class="as-a"><button class="btn btn--primary btn--sm" data-action="acct-password">Change password</button></div></form>`;
-  return `<div class="as-tabs" role="group" aria-label="Settings section">${tab('profile', 'Profile')}${tab('email', 'Email')}${tab('password', 'Password')}</div><div class="as-b">${body}</div>`;
+  // a responder's sign-in email is issued by the utility, so only staff and residents change theirs
+  return `<div class="as-tabs" role="group" aria-label="Settings section">${tab('profile', 'Profile')}${ses?.isResponder ? '' : tab('email', 'Email')}${tab('password', 'Password')}</div><div class="as-b">${body}</div>`;
 }
 function openAccountSettings() {
   if (!B.FB_ENABLED) return showToast({ msg: 'Account settings are available when signed in to the SAMAR-AGOS database.', kind: 'info' });
@@ -418,8 +513,27 @@ const paintAccountSettings = () => {
 function acctError(formId, e) {
   const box = document.querySelector(`#${formId} .auth-err`);
   const msg = ['auth/invalid-credential', 'auth/wrong-password'].includes(e?.code) ? 'Your current password is incorrect.' : e?.code ? B.authMessage(e) : e?.message || 'Something went wrong.';
-  if (box) (box.hidden = false), (box.innerHTML = `${icon('alert', 15)}<span>${esc(msg)}</span>`);
+  if (box) (box.hidden = false), (box.innerHTML = `<span>${esc(msg)}</span>`);
 }
+
+// Change handlers (data-change): ID photo.
+registerInputs({
+  'id-file': async (el) => {
+    const f = el.files && el.files[0];
+    if (!f) return;
+    if (!/^image\//.test(f.type)) return showToast({ msg: 'Please choose a photo (JPG or PNG) of your ID.', kind: 'error' });
+    try {
+      let img = await readImage(f, 1400);
+      if (img.length > 900000) img = await readImage(f, 1000);
+      pendingId = img;
+    } catch (e) {
+      return showToast({ msg: 'Could not read that photo. Try another one.', kind: 'error' });
+    }
+    paintIdUpload();
+    const submit = document.querySelector('#onb-form .auth-submit');
+    if (submit) submit.textContent = 'Finish';
+  },
+});
 
 async function openTeamAccess() {
   const emails = await B.getProviderEmails();
@@ -435,23 +549,35 @@ async function openTeamAccess() {
   );
 }
 
+// Current Catbalogan weather for the sidebar scene (clear sky until the forecast has loaded).
+function sceneWeather() {
+  const c = weatherState().data?.current;
+  const hour = Number(new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', hour12: false }));
+  const night = hour < 6 || hour >= 18;
+  if (!c) return { sky: 'clear', wind: 0, night };
+  const icon = describeWeather(c.weather_code).icon;
+  const sky = icon === 'storm' ? 'storm' : icon === 'rain' || icon === 'drizzle' || (c.precipitation || 0) >= 0.5 ? 'rain' : icon === 'partly' ? 'partly' : icon === 'sun' ? 'clear' : 'cloudy';
+  return { sky, wind: c.wind_speed_10m || 0, night };
+}
+
 // ---------------------------------------------------------------- app shell (shared by both portals)
 // Residents and staff get the same sidebar + top bar; only the nav, status pill and menu differ.
 function renderShell(area, page, html) {
   const s = S.getState();
   const res = area === 'r';
-  const aud = res ? 'resident' : 'provider';
+  const crew = area === 'c';
+  const aud = res ? 'resident' : crew ? 'responder' : 'provider';
   const unread = s.notifications.filter((n) => n.audience === aud && n.state === 'unread').length;
-  const home = res ? '#/r/home' : '#/p/overview';
+  const home = HOME[area];
   app.innerHTML = `<div class="pv">
     <a class="skip" href="#view">Skip to content</a>
-    <aside class="sb" id="sidebar" aria-label="${res ? 'Resident' : 'Provider'} navigation">
+    <aside class="sb" id="sidebar" aria-label="${res ? 'Resident' : crew ? 'Responder' : 'Provider'} navigation">
       <div class="sb-top">
-        <a href="${home}" class="sb-logo" aria-label="SAMAR-AGOS ${res ? 'home' : 'overview'}">${logoMark(36)}<span class="sb-brand"><strong>SAMAR-AGOS</strong><span>${res ? 'Resident Portal' : 'Water Operations'}</span></span></a>
-        <div class="sb-scene">${cityScene()}</div>
+        <a href="${home}" class="sb-logo" aria-label="SAMAR-AGOS ${res ? 'home' : 'overview'}">${logoMark(36)}<span class="sb-brand"><strong>SAMAR-AGOS</strong><span>${res ? 'Resident Portal' : crew ? 'Field Response' : 'Water Operations'}</span></span></a>
+        <div class="sb-scene">${cityScene(sceneWeather())}</div>
       </div>
       <nav class="sb-nav">
-        ${(res ? RES_NAV : PRO_NAV).map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
+        ${(res ? RES_NAV : crew ? RSP_NAV : PRO_NAV).map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
           const c = n.count ? n.count() : null;
           const on = page === n.id || (res && page === 'report' && n.id === 'reports'); // the report form belongs to My Reports
           return `<a href="#/${area}/${n.id}" class="sb-a ${on ? 'is-active' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
@@ -466,9 +592,9 @@ function renderShell(area, page, html) {
         <div class="tb-right">
           <span id="tb-status">${headerStatus()}</span>
           <span class="tb-div" aria-hidden="true"></span>
-          ${!res && isDemoMode() ? `<button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>` : ''}
+          ${area === 'p' && isDemoMode() ? `<button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>` : ''}
           <button type="button" class="icon-btn bell" data-action="notif-panel" data-aud="${aud}" aria-haspopup="dialog" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></button>
-          ${accountMenu(res)}
+          ${accountMenu(area)}
         </div>
       </header>
       <main id="view" class="pv-content ${res ? 'pv-content--res' : ''} scroll-root" tabindex="-1">${html}</main>
@@ -493,8 +619,9 @@ function setDemoMode(on) {
   }
 }
 
-function accountMenu(res) {
-  const user = res ? RESIDENT : PROVIDER_USER;
+function accountMenu(area) {
+  const res = area === 'r';
+  const user = res ? RESIDENT : area === 'c' ? RESPONDER_USER : PROVIDER_USER;
   const email = B.FB_ENABLED ? B.getSession()?.email : '';
   const av = `<span class="avatar ${res ? '' : 'avatar--navy'}">${user.initials}</span>`;
   return `<details class="acct">
@@ -502,7 +629,7 @@ function accountMenu(res) {
     <div class="acct-menu">
       <div class="acct-head">${av}<span><strong>${esc(user.name)}</strong>${email || res ? `<span>${esc(email || user.address)}</span>` : ''}</span></div>
       <button data-action="account-settings">${icon('user', 16)}<span>Account settings</span></button>
-      ${!res ? `<button data-action="demo-toggle" aria-pressed="${isDemoMode()}">${icon('play', 16)}<span>Demo mode: ${isDemoMode() ? 'On' : 'Off'}</span></button>` : ''}
+      ${area === 'p' ? `<button data-action="demo-toggle" aria-pressed="${isDemoMode()}">${icon('play', 16)}<span>Demo mode: ${isDemoMode() ? 'On' : 'Off'}</span></button>` : ''}
       <button data-action="logout" class="acct-out">${icon('logout', 16)}<span>Sign out</span></button>
     </div>
   </details>`;
@@ -524,6 +651,11 @@ function headerStatus() {
     const r = S.residentService();
     const label = r.label.charAt(0) + r.label.slice(1).toLowerCase();
     return cell('#/r/home', `Brgy. ${RESIDENT.barangay}`, r.sev, label, 'Water service in your area');
+  }
+  if (current?.area === 'c') {
+    const open = S.getState().workOrders.filter((w) => w.responder === RESPONDER_USER.loginEmail && w.status !== 'Completed');
+    const late = open.filter((w) => w.target < Date.now()).length;
+    return cell('#/c/jobs', 'Open jobs', late ? 'warning' : 'normal', late ? `${open.length}, ${late} overdue` : String(open.length), 'Work orders assigned to you');
   }
   const o = S.overallStatus();
   const label = { normal: 'Normal', warning: 'Warning', critical: 'Critical', offline: 'Data unavailable' }[o.sev];
@@ -562,7 +694,7 @@ function refreshTimes() {
 function updateBell() {
   const el = document.getElementById('bell-n');
   if (!el || !current) return;
-  const aud = current.area === 'r' ? 'resident' : 'provider';
+  const aud = current.area === 'r' ? 'resident' : current.area === 'c' ? 'responder' : 'provider';
   const n = S.getState().notifications.filter((x) => x.audience === aud && x.state === 'unread').length;
   el.textContent = n;
   el.hidden = !n;
@@ -576,9 +708,11 @@ register({
   login: (el) => {
     role = el.dataset.role;
     localStorage.setItem(ROLE_KEY, role);
-    go(role === 'resident' ? '#/r/home' : '#/p/overview');
+    go(homeOf(role));
   },
   logout: async () => {
+    const ok = await confirmDialog({ title: 'Sign out?', body: 'You will need to sign in again to use SAMAR-AGOS.', confirm: 'Sign out' });
+    if (!ok) return;
     role = null;
     localStorage.removeItem(ROLE_KEY);
     if (B.FB_ENABLED) {
@@ -619,7 +753,13 @@ register({
     el.setAttribute('aria-pressed', String(show));
   },
   'profile-edit': () => openProfileEditor(),
-  'account-settings': () => openAccountSettings(),
+  'account-settings': () => ((pendingId = null), openAccountSettings()),
+  'id-remove': () => {
+    pendingId = null;
+    paintIdUpload();
+    const submit = document.querySelector('#onb-form .auth-submit');
+    if (submit) submit.textContent = 'Finish without ID';
+  },
   'acct-tab': (el) => ((acctTab = el.dataset.id), paintAccountSettings()),
   'acct-email': (el) =>
     busy(el, async () => {
@@ -655,6 +795,8 @@ register({
       const data = readProfileFields();
       if (!data.name) return showToast({ msg: 'Please enter your full name.', kind: 'error' });
       await B.saveProfile(data);
+      if (pendingId) await B.saveValidId(pendingId);
+      pendingId = null;
       applyProfile(B.getSession());
       closeOverlay();
       showToast({ msg: 'Profile updated', kind: 'success' });
@@ -741,7 +883,7 @@ function openDemoPanel() {
     <h3 class="sec-t">Trigger a system scenario</h3>
     <div class="scn-list">${Object.entries(SCENARIOS)
       .map(
-        ([k, v]) => `<div class="scn ${act.has(k) ? 'is-on' : ''}"><div><strong>${v.label}</strong>${act.has(k) ? ' ' + status('warning', 'Active') : ''}<p>${v.desc}</p></div><button class="btn btn--sm ${k === 'normal' ? 'btn--outline' : 'btn--primary'}" data-action="apply-scenario" data-id="${k}">${k === 'normal' ? 'Restore normal' : 'Apply'}</button></div>`
+        ([k, v]) => `<div class="scn ${act.has(k) ? 'is-on' : ''}"><div><strong>${v.label}</strong>${act.has(k) ? ' ' + status('warning', 'Active') : ''}<p>${v.desc}</p><p class="scn-shows">${k === 'normal' ? 'Returns every screen to normal' : `Shows: ${(SCENARIO_SHOWS[k] || []).map((f) => DEMO_FEATURES[f]).join(', ')}`}</p></div><button class="btn btn--sm ${k === 'normal' ? 'btn--outline' : 'btn--primary'}" data-action="apply-scenario" data-id="${k}">${k === 'normal' ? 'Restore normal' : 'Apply'}</button></div>`
       )
       .join('')}</div>
     <button class="btn btn--danger-ghost" data-action="reset-demo">Reset demo scenarios</button>`,

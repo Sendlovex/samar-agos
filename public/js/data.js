@@ -170,8 +170,11 @@ export const RESIDENT = {
   zone: DEMO_BRGY.id,
   ...at(DEMO_BRGY.center[0], DEMO_BRGY.center[1]),
   phone: '',
+  verified: true, // offline demo resident can report; signed-in residents need a valid ID
 };
 export const PROVIDER_USER = { name: 'Demo Operator', role: 'Water utility staff', initials: 'DO' };
+// Offline demo responder; signed-in responders replace these fields with their own account.
+export const RESPONDER_USER = { id: 'R-DEMO', name: 'Ramon Dacut', initials: 'RD', loginEmail: 'r.dacut@responders.samar-agos.app', contactEmail: 'ramon.dacut@example.com', phone: '', credSent: false };
 
 export const REPORT_TYPES = [
   { id: 'no_water', label: 'No Water', icon: 'droplet-off' },
@@ -196,6 +199,23 @@ export const REPORT_STEPS = [
 export const WO_STEPS = ['New', 'Assigned', 'En Route', 'Inspecting', 'Repairing', 'Testing', 'Completed'];
 
 // Demo-mode stress scenarios, modelled on documented Catbalogan events (CWD WSP 2022; July 2026 water crisis).
+// The five demo features; each scenario lists the ones it shows (see the Demo scenarios panel).
+export const DEMO_FEATURES = {
+  consumption: 'Consumption trends',
+  demand: 'Demand forecast',
+  storage: 'Reservoir and remaining supply',
+  warning: 'Shortage early warning',
+  reports: 'Reports and incidents',
+};
+export const SCENARIO_SHOWS = {
+  highDemand: ['consumption', 'demand', 'storage'],
+  lowReservoir: ['storage', 'warning'],
+  pumpFailure: ['storage', 'warning'],
+  pipelineLeak: ['reports', 'consumption'],
+  lowPressure: ['reports'],
+  sourceDisruption: ['storage', 'warning'],
+  emergencySupply: ['storage', 'demand'],
+};
 export const SCENARIOS = {
   normal: { label: 'Normal Operations', desc: 'All sources available. Demand follows the normal daily pattern.' },
   highDemand: { label: 'High Demand (dry season)', desc: 'Demand rises ~22% above normal, as in the April–June dry months.' },

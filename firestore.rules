@@ -3,6 +3,8 @@ rules_version = '2';
 // SAMAR-AGOS access model
 // - Anyone can create an account (resident).
 // - Staff (provider) access = email listed in config/access.providerEmails.
+// - Field responders = email listed in config/access.responderEmails. Staff create their
+//   accounts; responders read and update only the work orders assigned to them.
 //   The first signed-in user may create that document listing only themselves
 //   (project bootstrap); after that only staff can change it.
 // - Residents see only their own reports and notifications addressed to them
@@ -22,6 +24,9 @@ service cloud.firestore {
     function isProvider() {
       return signedIn() && exists(accessDoc()) && myEmail() in get(accessDoc()).data.providerEmails;
     }
+    function isResponder() {
+      return signedIn() && exists(accessDoc()) && myEmail() in get(accessDoc()).data.get('responderEmails', []);
+    }
 
     match /config/access {
       allow read: if signedIn();
@@ -34,9 +39,26 @@ service cloud.firestore {
       allow create, update: if signedIn() && request.auth.uid == uid;
     }
 
+    // Responder roster with the temporary password until the email script has sent it.
+    match /responders/{uid} {
+      allow read, write: if isProvider();
+    }
+
+    // Valid ID photos: uploaded by the account owner, visible to the owner and staff.
+    match /validIds/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isProvider());
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.image is string && request.resource.data.image.size() < 950000;
+      allow delete: if isProvider() || (signedIn() && request.auth.uid == uid);
+    }
+    function hasValidId() {
+      return exists(/databases/$(database)/documents/validIds/$(request.auth.uid));
+    }
+
     match /reports/{id} {
       allow read: if isProvider() || (signedIn() && resource.data.reporterUid == request.auth.uid);
-      allow create: if isProvider() || (signedIn() && request.resource.data.reporterUid == request.auth.uid);
+      // residents can report only after uploading a valid ID
+      allow create: if isProvider() || (signedIn() && request.resource.data.reporterUid == request.auth.uid && hasValidId());
       allow update: if isProvider()
         || (signedIn() && resource.data.reporterUid == request.auth.uid && request.resource.data.reporterUid == request.auth.uid);
       allow delete: if isProvider();
@@ -61,6 +83,11 @@ service cloud.firestore {
     match /workOrders/{id} {
       allow read: if signedIn();
       allow write: if isProvider();
+      // the assigned responder records progress, notes, photos and completion only
+      allow update: if isResponder() && resource.data.responder == myEmail()
+        && request.resource.data.responder == myEmail()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'history', 'notes', 'photos', 'completion', 'relay', 'updatedAt']);
     }
     match /advisories/{id} {
       allow read: if signedIn();

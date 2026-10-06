@@ -6,6 +6,7 @@ import { lineChart, sparkline } from '../charts.js';
 import { renderMap } from '../map.js';
 import { esc, fmt, fmtTime, fmtTime24, fmtDate, fmtDateTime, relTime, toLocalInput, fromLocalInput, readImage } from '../util.js';
 import { go } from '../app.js';
+import * as B from '../backend.js';
 import { openWorkOrderModal, openAdvisoryModal, incStatus, woStatusBadge, incSev, incidentTable } from './provider-shared.js';
 
 const st = () => S.getState();
@@ -480,9 +481,100 @@ const workOrders = {
         ],
         sorted,
         { rowAction: { action: 'goto-wo', key: 'id' }, empty: 'No work orders in this view' }
-      )}</div>`}`;
+      )}</div>`}
+      ${respondersCard()}`;
   },
 };
+
+// ---------------------------------------------------------------- responders
+// Field responders sign in with a generated email and see only the work orders assigned to them.
+function respondersCard() {
+  const list = S.responders();
+  const open = (r) => st().workOrders.filter((w) => w.responder === r.loginEmail && w.status !== 'Completed').length;
+  const cred = (r) => (r.credSent ? `<span>Sent</span><small>${fmtDateTime(r.sentAt)}</small>` : B.FB_ENABLED ? '<span class="txt-warn">Sending</span><small>Waiting for the email script</small>' : '<span class="muted">Not sent</span><small>Offline demo</small>');
+  return `<section class="card rsp">
+    <div class="rsp-h"><div><h2>Responders</h2><p>People who receive work orders in the field. Each one gets a sign-in email and a temporary password by email.</p></div><button class="btn btn--primary btn--sm" data-action="rsp-new">Add responder</button></div>
+    ${list.length ? `<div class="rsp-wrap"><table class="tbl rsp-t"><thead><tr><th>Name</th><th>Sign-in email</th><th>Credentials sent to</th><th>Open jobs</th><th>Credentials</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
+      ${list.map((r) => `<tr>
+        <td><strong>${esc(r.name)}</strong>${r.phone ? `<div class="rsp-sub">${esc(r.phone)}</div>` : ''}</td>
+        <td class="mono">${esc(r.loginEmail)}</td>
+        <td>${esc(r.contactEmail)}</td>
+        <td>${open(r)}</td>
+        <td><div class="rsp-cred">${cred(r)}</div></td>
+        <td class="rsp-a"><button class="btn btn--ghost btn--xs" data-action="rsp-remove" data-id="${esc(r.id)}">Remove</button></td>
+      </tr>`).join('')}
+    </tbody></table></div>` : '<p class="rsp-empty">No responders yet. Add one to assign work orders to field crews.</p>'}
+  </section>`;
+}
+
+function openResponderModal() {
+  openModal(
+    'Add responder',
+    `<div id="rsp-body"><form class="form" id="rsp-form" onsubmit="return false">
+      ${field('Full name', '<input id="rsp-name" autocomplete="off" placeholder="e.g. Ramon Dacut"/>', { id: 'rsp-name', req: true })}
+      ${field('Email', '<input id="rsp-email" type="email" autocomplete="off" placeholder="name@example.com"/>', { id: 'rsp-email', req: true, hint: 'The sign-in email and temporary password are sent here.' })}
+      ${field('Mobile number', '<input id="rsp-phone" type="tel" autocomplete="off" placeholder="+63 9xx xxx xxxx"/>', { id: 'rsp-phone', optional: true })}
+      <div class="auth-err" role="alert" hidden></div>
+      <div class="as-a"><button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="rsp-create">Create account and send</button></div>
+    </form></div>`
+  );
+}
+
+function responderCreated(r) {
+  const body = document.getElementById('rsp-body');
+  if (!body) return;
+  body.innerHTML = `<div class="rsp-done">
+      <p>${B.FB_ENABLED ? `The account for <strong>${esc(r.name)}</strong> is ready. The credentials below are being emailed to <strong>${esc(r.contactEmail)}</strong>.` : `Offline demo: <strong>${esc(r.name)}</strong> was added to the list. No account is created and no email is sent.`}</p>
+      <dl class="rsp-kv"><div><dt>Sign-in email</dt><dd class="mono">${esc(r.loginEmail)}</dd></div><div><dt>Temporary password</dt><dd class="mono">${esc(r.tempPassword)}</dd></div></dl>
+      <p class="fine">They are asked to set their own password the first time they sign in. This password is not shown again.</p>
+      <div class="as-a"><button class="btn btn--primary" data-action="ov-close">Done</button></div>
+    </div>`;
+}
+
+register({
+  'rsp-new': () => openResponderModal(),
+  'rsp-create': (el) => {
+    const v = (id) => document.getElementById(id).value.trim();
+    const name = v('rsp-name').replace(/\s+/g, ' ');
+    const contactEmail = v('rsp-email').toLowerCase();
+    const phone = v('rsp-phone');
+    const err = document.querySelector('#rsp-form .auth-err');
+    const fail = (m) => ((err.hidden = false), (err.innerHTML = `<span>${esc(m)}</span>`));
+    if (!name) return fail('Enter the full name of the responder.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return fail('Enter a valid email address.');
+    if (S.responders().some((r) => r.contactEmail === contactEmail)) return fail('A responder with this email is already listed.');
+    err.hidden = true;
+    busy(el, async () => {
+      try {
+        let r;
+        if (B.FB_ENABLED) r = await B.createResponder({ name, contactEmail, phone });
+        else {
+          const loginEmail = B.loginEmailFor(name, S.responders().map((x) => x.loginEmail));
+          r = { id: `R${Date.now().toString(36)}`, name, contactEmail, phone, loginEmail, tempPassword: B.tempPassword(), credSent: false, createdAt: Date.now() };
+          const { tempPassword, ...keep } = r;
+          S.addResponderLocal(keep);
+        }
+        responderCreated(r);
+      } catch (e) {
+        console.error(e);
+        fail(e?.code ? B.authMessage(e) : e?.message || 'Could not create the account.');
+      }
+    });
+  },
+  'rsp-remove': async (el) => {
+    const r = S.responders().find((x) => x.id === el.dataset.id);
+    if (!r) return;
+    const open = st().workOrders.filter((w) => w.responder === r.loginEmail && w.status !== 'Completed').length;
+    const ok = await confirmDialog({ title: `Remove ${r.name}?`, body: `They can no longer sign in to the responder dashboard.${open ? ` Their ${open} open work order${open > 1 ? 's stay' : ' stays'} assigned until you reassign ${open > 1 ? 'them' : 'it'}.` : ''}`, confirm: 'Remove responder', danger: true });
+    if (!ok) return;
+    try {
+      if (B.FB_ENABLED) await B.removeResponder(r), S.toast(`${r.name} removed`);
+      else S.removeResponderLocal(r.id);
+    } catch (e) {
+      S.toast(`Could not remove the responder (${e.code || e.message})`, 'error');
+    }
+  },
+});
 
 register({
   'wo-tab': (el) => ((woFilter = el.dataset.id), go('#/p/work-orders')),
@@ -513,7 +605,7 @@ const workOrderDetail = {
             <div><dt>Related incident</dt><dd>${inc ? `<a href="#/p/incidents/${inc.id}" class="mono">${inc.id}</a><br/><span class="sm muted">${esc(inc.title)}</span>` : '<span class="muted">Preventive / routine</span>'}</dd></div>
             <div><dt>Asset</dt><dd>${asset ? `<a href="#/p/assets/${asset.id}" class="mono">${asset.id}</a><br/><span class="sm muted">${esc(asset.name)}</span>` : esc(w.assetId)}</dd></div>
             <div><dt>Location</dt><dd>${esc(w.location)}</dd></div>
-            <div><dt>Assigned team</dt><dd>${esc(w.team || 'Unassigned')}</dd></div>
+            <div><dt>Assigned to</dt><dd>${w.status === 'Completed' ? esc(w.team || 'Unassigned') : `<label class="sr-only" for="wo-assign">Assign to</label><select id="wo-assign" class="wo-assign" data-change="wo-assign" data-id="${w.id}"><option value="">Not assigned</option>${S.responders().map((r) => `<option value="${esc(r.loginEmail)}" ${r.loginEmail === w.responder ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}${w.team && !S.responders().some((r) => r.loginEmail === w.responder) ? `<option selected disabled>${esc(w.team)}</option>` : ''}</select>`}</dd></div>
             <div><dt>Created</dt><dd>${fmtDateTime(w.createdAt)}</dd></div>
             <div><dt>Target completion</dt><dd class="${overdue ? 'txt-warn' : ''}">${fmtDateTime(w.target)}</dd></div>
             <div class="kv-wide"><dt>Description</dt><dd>${esc(w.description)}</dd></div>
@@ -547,6 +639,7 @@ const workOrderDetail = {
 };
 
 registerInputs({
+  'wo-assign': (el) => S.assignWorkOrder(el.dataset.id, S.responders().find((r) => r.loginEmail === el.value) || null),
   'wo-photo': async (el) => {
     const f = el.files?.[0];
     if (!f) return;
