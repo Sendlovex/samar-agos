@@ -1,14 +1,15 @@
 // SAMAR-AGOS application shell: routing, layouts, login, notifications, demo control.
 import * as S from './store.js';
 import * as B from './backend.js';
-import { RESIDENT, PROVIDER_USER, RESPONDER_USER, SCENARIOS, DEMO_FEATURES, SCENARIO_SHOWS, UTILITY, ZONES, BARANGAY_LL, zoneOfBarangay } from './data.js';
-import { icon, logoMark, cityScene, status, register, registerInputs, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
+import { RESIDENT, PROVIDER_USER, RESPONDER_USER, SCENARIOS, DEMO_FEATURES, SCENARIO_SHOWS, UTILITY, ZONES, SERVICE_ZONES, BARANGAY_LL, zoneOfBarangay } from './data.js';
+import { uploadBox, phoneInput, phoneValue, icon, logoMark, cityScene, status, register, registerInputs, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
 import { installChartHover, measureCharts } from './charts.js';
 import { syncMaps } from './livemap.js';
 import { esc, relTime, fmtDate, fmtDateTime, toXY, readImage } from './util.js';
 import { residentViews } from './views/resident.js';
 import { weatherState, describe as describeWeather } from './weather.js';
 import { providerViews } from './views/provider.js';
+import { openExport, canExport } from './export.js';
 import { fieldViews as responderViews, syncLabel, mine as myWorkOrders } from './views/field.js';
 import { setWoFilter } from './views/provider-incidents.js';
 
@@ -72,7 +73,6 @@ const RSP_NAV = [
   { group: 'My Work', items: [
     { id: 'jobs', label: 'My Assignments', icon: 'clipboard', count: () => myWorkOrders().filter((w) => w.status !== 'Completed').length },
   ] },
-  { group: 'Account', items: [{ id: 'profile', label: 'Profile', icon: 'user' }] },
 ];
 // Each role has its own area of the app: r = resident, p = provider, c = field responder (crew).
 const AREA = { resident: 'r', provider: 'p', responder: 'c' };
@@ -115,6 +115,7 @@ function render() {
     html = empty('Something went wrong rendering this page', esc(err.message), 'octagon');
   }
   renderShell(area, pg, html);
+  if (area === 'p' && canExport(pg)) addExportButton(pg);
   view.mount?.(document.getElementById('view'), params);
   window.scrollTo(0, scroll || 0);
   if (!rerendering && measureCharts()) {
@@ -261,8 +262,9 @@ function renderAuth() {
   setTimeout(() => document.getElementById('au-email')?.focus(), 30);
 }
 
+// Barangays grouped by service zone (one option per barangay; the stored value is the plain name).
 const barangayOptions = (sel) =>
-  ZONES.map((z) => `<optgroup label="${esc(z.name)}">${z.barangays.map((b) => `<option ${b === sel ? 'selected' : ''}>${esc(b)}</option>`).join('')}</optgroup>`).join('');
+  SERVICE_ZONES.map((g) => `<optgroup label="${esc(`${g.name}, ${g.area}`)}">${ZONES.filter((z) => z.group === g.id).flatMap((z) => z.barangays).map((b) => `<option ${b === sel ? 'selected' : ''}>${esc(b)}</option>`).join('')}</optgroup>`).join('');
 
 function profileFields(p = {}) {
   return `${field('Full name', `<input id="pf-name" value="${esc(p.name || '')}" autocomplete="name" required/>`, { id: 'pf-name', req: true })}
@@ -271,14 +273,14 @@ function profileFields(p = {}) {
       ${field('Purok / street', `<input id="pf-addr" value="${esc(p.address || '')}" placeholder="e.g. Purok 3"/>`, { id: 'pf-addr', optional: true })}
     </div>
     <div class="grid-2">
-      ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true })}
+      ${field('Mobile number', phoneInput('pf-phone', p.phone), { id: 'pf-phone', optional: true })}
       ${field('Meter number', `<input id="pf-meter" value="${esc(p.meter || '')}" placeholder="As printed on your water bill"/>`, { id: 'pf-meter', optional: true })}
     </div>`;
 }
 // Staff settings omit barangay and address; only fields present on the form are read.
 const readProfileFields = () => {
   const v = (id) => document.getElementById(id)?.value;
-  const d = { name: (v('pf-name') || '').trim(), phone: (v('pf-phone') || '').trim() };
+  const d = { name: (v('pf-name') || '').trim(), phone: phoneValue('pf-phone') };
   if (v('pf-brgy') != null) d.barangay = v('pf-brgy');
   if (v('pf-addr') != null) d.address = v('pf-addr').trim();
   if (v('pf-meter') != null) d.meter = v('pf-meter').trim();
@@ -295,7 +297,7 @@ function idUpload(p = {}) {
   return `<div class="id-up" id="id-up">
     <div class="id-up-h"><span class="field-l">Valid ID <span class="opt">(optional)</span></span>${done ? `<span class="id-up-ok">Submitted ${fmtDate(p.idUploadedAt)}</span>` : ''}</div>
     ${pendingId ? `<div class="id-up-prev"><img src="${pendingId}" alt="Selected valid ID"/><button type="button" class="btn btn--ghost btn--sm" data-action="id-remove">Remove</button></div>` : ''}
-    <label class="id-up-btn"><input type="file" accept="image/*" data-change="id-file" hidden/>${pendingId ? 'Choose a different photo' : done ? 'Replace ID photo' : 'Upload a photo of your ID'}</label>
+    ${uploadBox(pendingId || done ? 'a different ID photo' : 'your valid ID photo', '<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-change="id-file"/>')}
     <p class="field-h">PhilSys national ID, driver's license, passport, UMID, voter's ID or barangay ID. Without a valid ID you can still view service updates, but you cannot send reports.</p>
   </div>`;
 }
@@ -329,6 +331,7 @@ function renderOnboarding() {
     const data = readProfileFields();
     const errBox = form.querySelector('.auth-err');
     if (!data.name) return (errBox.hidden = false), (errBox.innerHTML = '<span>Please enter your full name.</span>');
+    if (data.phone === null) return (errBox.hidden = false), (errBox.innerHTML = '<span>Enter the 10 digits of the mobile number after +63, starting with 9.</span>');
     busy(form.querySelector('button[type=submit]'), async () => {
       await B.saveProfile(data);
       if (pendingId) await B.saveValidId(pendingId);
@@ -437,7 +440,7 @@ async function boot() {
     app.innerHTML = `<div class="splash">${logoMark(44)}<p>Could not reach the SAMAR-AGOS server. Check your internet connection and reload.</p></div>`;
     return;
   }
-  S.setRemote({ flush: B.flush, allocIds: B.allocIds, getSession: B.getSession, setNotifState: B.setNotifState, reset: B.resetRemote, remove: B.removeDoc });
+  S.setRemote({ upload: B.uploadImage, flush: B.flush, allocIds: B.allocIds, getSession: B.getSession, setNotifState: B.setNotifState, reset: B.resetRemote, remove: B.removeDoc });
   B.onAuth(async (user) => {
     if (!user) {
       role = null;
@@ -479,7 +482,7 @@ function accountSettingsBody() {
     body = `<form class="form" id="pe-form" onsubmit="return false">${
       staff
         ? `${field('Full name', `<input id="pf-name" value="${esc(p.name || '')}" autocomplete="name" required/>`, { id: 'pf-name', req: true })}
-           ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true })}`
+           ${field('Mobile number', phoneInput('pf-phone', p.phone), { id: 'pf-phone', optional: true })}`
         : `${profileFields(p)}${idUpload(p)}`
     }<div class="as-a"><button class="btn btn--primary btn--sm" data-action="profile-save">Save profile</button></div></form>`;
   else if (acctTab === 'email')
@@ -525,9 +528,7 @@ registerInputs({
     if (!f) return;
     if (!/^image\//.test(f.type)) return showToast({ msg: 'Please choose a photo (JPG or PNG) of your ID.', kind: 'error' });
     try {
-      let img = await readImage(f, 1400);
-      if (img.length > 900000) img = await readImage(f, 1000);
-      pendingId = img;
+      pendingId = await readImage(f, 1600, 0.85); // stored in Firebase Storage, so it can stay readable
     } catch (e) {
       return showToast({ msg: 'Could not read that photo. Try another one.', kind: 'error' });
     }
@@ -550,6 +551,16 @@ async function openTeamAccess() {
     <p class="fine">They must sign in with this exact email. Changes take effect on their next sign-in.</p>`
   );
 }
+
+// Operators can export the data on each page: the button sits with the page's own actions.
+function addExportButton(page) {
+  const head = document.querySelector('#view .page-h');
+  if (!head) return;
+  let actions = head.querySelector(':scope > .page-a');
+  if (!actions) (actions = document.createElement('div')), (actions.className = 'page-a'), head.appendChild(actions);
+  actions.insertAdjacentHTML('afterbegin', `<button type="button" class="btn btn--outline btn--sm" data-action="export-open" data-page="${page}" aria-haspopup="dialog" aria-expanded="false">Export</button>`);
+}
+register({ 'export-open': (el) => openExport(el.dataset.page, el) });
 
 // Current Catbalogan weather for the sidebar scene (clear sky until the forecast has loaded).
 function sceneWeather() {
@@ -660,7 +671,7 @@ function headerStatus() {
   }
   if (current?.area === 'c') {
     const l = syncLabel();
-    return cell('#/c/profile', 'Field updates', l.sev, l.word, l.tip);
+    return cell('#/c/jobs', 'Field updates', l.sev, l.word, l.tip);
   }
   const o = S.overallStatus();
   const label = { normal: 'Normal', warning: 'Warning', critical: 'Critical', offline: 'Data unavailable' }[o.sev];
@@ -809,6 +820,7 @@ register({
     busy(el, async () => {
       const data = readProfileFields();
       if (!data.name) return showToast({ msg: 'Please enter your full name.', kind: 'error' });
+      if (data.phone === null) return showToast({ msg: 'Enter the 10 digits of the mobile number after +63, starting with 9.', kind: 'error' });
       await B.saveProfile(data);
       if (pendingId) await B.saveValidId(pendingId);
       pendingId = null;
@@ -997,20 +1009,16 @@ export function notificationsView(aud) {
   const all = s.notifications.filter((n) => n.audience === aud);
   const lists = { unread: all.filter((n) => n.state === 'unread'), all: all.filter((n) => n.state !== 'archived'), archived: all.filter((n) => n.state === 'archived') };
   const list = lists[notifTab] || lists.unread;
-  const sevIcon = (n) => {
-    const sev = n.severity || { advisory: 'warning', restored: 'normal', water: 'info', report: 'info', reading: 'info' }[n.kind] || 'info';
-    return `<span class="nt-ic nt-ic--${SEV[sev]?.cls || 'info'}">${icon(SEV[sev]?.icon || 'info', 18)}</span>`;
-  };
   return `<div class="page-h"><div><h1>Notifications</h1><p class="page-sub">${aud === 'resident' ? 'Updates about advisories, your reports, and water service in your area.' : 'Operational alerts, report clusters, equipment warnings, and overdue work.'}</p></div>
-    <div class="page-a"><button class="btn btn--outline btn--sm" data-action="notif-allread" data-aud="${aud}">${icon('check', 15)} Mark all as read</button></div></div>
+    <div class="page-a"><button class="btn btn--outline btn--sm" data-action="notif-allread" data-aud="${aud}">Mark all as read</button></div></div>
     ${tabs([{ id: 'unread', label: 'Unread', count: lists.unread.length }, { id: 'all', label: 'All', count: lists.all.length }, { id: 'archived', label: 'Archived', count: lists.archived.length }], notifTab, 'notif-tab')}
     <div class="nt-list">${
       list.length
         ? list
             .map(
-              (n) => `<article class="nt ${n.state === 'unread' ? 'is-unread' : ''}">${sevIcon(n)}
-        <div class="nt-c" role="button" tabindex="0" data-action="notif-open" data-id="${n.id}" data-link="${esc(n.link || '')}"><div class="nt-t">${esc(n.title)} ${n.state === 'unread' ? '<span class="sr-only">(unread)</span><span class="nt-dot" aria-hidden="true"></span>' : ''}</div><div class="nt-b">${esc(n.body)}</div><div class="nt-time">${fmtDateTime(n.at)}, ${relTime(n.at)}</div></div>
-        <div class="nt-a">${n.state !== 'archived' ? `<button class="btn btn--ghost btn--xs" data-action="notif-read" data-id="${n.id}" data-to="${n.state === 'unread' ? 'read' : 'unread'}">${n.state === 'unread' ? 'Mark read' : 'Mark unread'}</button><button class="btn btn--ghost btn--xs" data-action="notif-archive" data-id="${n.id}">${icon('archive', 14)} Archive</button>` : `<button class="btn btn--ghost btn--xs" data-action="notif-read" data-id="${n.id}" data-to="read">Restore</button>`}</div></article>`
+              (n) => `<article class="nt ${n.state === 'unread' ? 'is-unread' : ''}">
+        <div class="nt-c" role="button" tabindex="0" data-action="notif-open" data-id="${n.id}" data-link="${esc(n.link || '')}"><div class="nt-t">${esc(n.title)} ${n.state === 'unread' ? '<span class="sr-only">(unread)</span>' : ''}</div><div class="nt-b">${esc(n.body)}</div><div class="nt-time">${fmtDateTime(n.at)}, ${relTime(n.at)}</div></div>
+        <div class="nt-a">${n.state !== 'archived' ? `<button class="btn btn--ghost btn--xs" data-action="notif-read" data-id="${n.id}" data-to="${n.state === 'unread' ? 'read' : 'unread'}">${n.state === 'unread' ? 'Mark read' : 'Mark unread'}</button><button class="btn btn--ghost btn--xs" data-action="notif-archive" data-id="${n.id}">Archive</button>` : `<button class="btn btn--ghost btn--xs" data-action="notif-read" data-id="${n.id}" data-to="read">Restore</button>`}</div></article>`
             )
             .join('')
         : empty(notifTab === 'unread' ? 'You are all caught up' : 'No notifications here', '', 'bell')

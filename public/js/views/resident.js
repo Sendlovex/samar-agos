@@ -2,7 +2,7 @@
 import * as S from '../store.js';
 import * as B from '../backend.js';
 import { RESIDENT, REPORT_TYPES, REPORT_STEPS, ZONES, zoneById, reportTypeLabel, UTILITY, WATER_RATES, waterBill, CWD_FACTS } from '../data.js';
-import { icon, status, src, card, kpi, tabs, alertBanner, timeline, empty, register, registerInputs, openModal, closeOverlay, field, updatedAgo, SEV, actions, busy } from '../ui.js';
+import { uploadBox, icon, status, src, card, kpi, tabs, alertBanner, timeline, empty, register, registerInputs, openModal, closeOverlay, field, updatedAgo, SEV, actions, busy } from '../ui.js';
 import { lineChart, barChart, gaugeBar } from '../charts.js';
 import { renderMap, svgPoint } from '../map.js';
 import { syncMaps } from '../livemap.js';
@@ -426,7 +426,7 @@ function rpStep(d) {
     ${
       d.photo
         ? `<div class="photo-prev"><img src="${d.photo}" alt="Attached photo preview"/><button type="button" class="btn btn--ghost btn--sm" data-action="rp-photo-rm">${icon('x', 14)} Remove photo</button></div>`
-        : `<label class="upload">${icon('camera', 22)}<span><strong>Add a photo</strong><em>JPG or PNG, optional</em></span><input type="file" accept="image/*" capture="environment" data-change="rp-photo" class="sr-only"/></label>`
+        : uploadBox('a photo', `<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-change="rp-photo"/>`, { hint: 'JPEG, PNG or WEBP (max 10 MB), optional' })
     }
     <dl class="kv rp-sum">
       <div><dt>Problem</dt><dd><strong>${esc(reportTypeLabel(d.type))}</strong></dd></div>
@@ -484,7 +484,7 @@ registerInputs({
     const f = el.files?.[0];
     if (!f) return;
     try {
-      draft.photo = await readImage(f);
+      draft.photo = S.isRemote() ? await readImage(f, 1280, 0.82) : await readImage(f);
     } catch (e) {
       S.toast('Could not read that image', 'error');
     }
@@ -571,7 +571,7 @@ register({
     } catch (e) {
       console.error(e);
       const msg =
-        e?.code === 'permission-denied'
+        e?.code === 'permission-denied' || e?.code === 'storage/unauthorized'
           ? 'Your report was not sent. Reporting needs a valid ID on your account. Upload one in Account settings, then try again.'
           : e?.code === 'unavailable' || e?.code === 'deadline-exceeded'
             ? 'Your report was not sent because the server could not be reached. Check your connection and try again.'

@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// SAMAR-AGOS photo storage (Firebase Storage)
+// - validIds/{uid}/…     valid ID photo: written by the account owner, read by the owner and staff
+// - reports/{uid}/…      photo attached to a resident report: written by the reporter
+// - workOrders/{woId}/…  before/after repair photos: staff, or the responder assigned to that work order
+// Staff and responders are the emails listed in Firestore config/access (same as firestore.rules).
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function access() {
+      return firestore.get(/databases/(default)/documents/config/access).data;
+    }
+    function isProvider() {
+      return signedIn() && myEmail() in access().providerEmails;
+    }
+    function isResponder() {
+      return signedIn() && myEmail() in access().get('responderEmails', []);
+    }
+    function isPhoto() {
+      return request.resource.contentType.matches('image/.*') && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    match /validIds/{uid}/{file} {
+      allow read: if signedIn() && (request.auth.uid == uid || isProvider());
+      allow create: if signedIn() && request.auth.uid == uid && isPhoto();
+      allow delete: if signedIn() && (request.auth.uid == uid || isProvider());
+    }
+
+    match /reports/{uid}/{file} {
+      allow read: if signedIn() && (request.auth.uid == uid || isProvider());
+      allow create: if signedIn() && request.auth.uid == uid && isPhoto();
+      allow delete: if isProvider();
+    }
+
+    match /workOrders/{woId}/{file} {
+      allow read: if isProvider() || isResponder();
+      allow create: if isPhoto() && (isProvider()
+        || (isResponder() && firestore.get(/databases/(default)/documents/workOrders/$(woId)).data.responder == myEmail()));
+      allow delete: if isProvider();
+    }
+  }
+}

@@ -1,7 +1,7 @@
 // Provider: Incident & report inbox, incident detail, work orders.
 import * as S from '../store.js';
 import { ZONES, zoneById, CRITICAL_FACILITIES, reportTypeLabel, REPORT_TYPES, WO_STEPS, TEAMS } from '../data.js';
-import { icon, status, src, card, kpi, timeline, activityLog, empty, tabs, table, field, openModal, closeOverlay, register, registerInputs, formData, confirmDialog, updatedAgo, priorityBadge, sevBadge, alertBanner, SEV, pill, busy } from '../ui.js';
+import { uploadBox, phoneInput, phoneValue, icon, status, src, card, kpi, timeline, activityLog, empty, tabs, table, field, openModal, closeOverlay, register, registerInputs, formData, confirmDialog, updatedAgo, priorityBadge, sevBadge, alertBanner, SEV, pill, busy } from '../ui.js';
 import { lineChart, sparkline } from '../charts.js';
 import { renderMap } from '../map.js';
 import { esc, fmt, fmtTime, fmtTime24, fmtDate, fmtDateTime, relTime, toLocalInput, fromLocalInput, readImage } from '../util.js';
@@ -74,9 +74,9 @@ function wsHead() {
   const inc = openIncidentIn(c.zone);
   return `<div class="ib-head"><div><div class="ib-k">Possible service issue</div><h2>${esc(z.name)}</h2><div class="ib-sub">${esc(z.barangays.join(', '))}, ${fmt(z.connections)} service connections</div></div>
     <div class="ib-actions">
-      <button class="btn btn--ghost btn--sm" data-action="inbox-ack" data-zone="${c.zone}">${icon('check', 15)} Acknowledge only</button>
-      ${inc ? `<button class="btn btn--outline btn--sm" data-action="inbox-link" data-zone="${c.zone}" data-inc="${inc.id}">${icon('link', 15)} Link to ${inc.id}</button>` : ''}
-      <button class="btn btn--primary btn--sm" data-action="inbox-create" data-zone="${c.zone}">${icon('plus', 15)} Create incident</button>
+      <button class="btn btn--outline btn--sm" data-action="inbox-ack" data-zone="${c.zone}">Acknowledge only</button>
+      ${inc ? `<button class="btn btn--outline btn--sm" data-action="inbox-link" data-zone="${c.zone}" data-inc="${inc.id}">Link to ${inc.id}</button>` : ''}
+      <button class="btn btn--primary btn--sm" data-action="inbox-create" data-zone="${c.zone}">Create incident</button>
     </div></div>`;
 }
 
@@ -198,7 +198,7 @@ register({
           <label class="chk"><input type="checkbox" name="evidence" data-multi="1" value="Resident reports" checked/> Resident reports: ${c.reports.length} in ${esc(z.short)}</label></div></div>
         ${field('Operator note', '<textarea name="note" id="inc-note" rows="2" placeholder="e.g. Pressure drop matches the report cluster."></textarea>', { id: 'inc-note', optional: true })}
       </form>`,
-      { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="inc-create" data-zone="${c.zone}">${icon('alert', 15)} Create incident</button>` }
+      { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="inc-create" data-zone="${c.zone}">Create incident</button>` }
     );
   },
   'inc-create': (el) => busy(el, async () => {
@@ -241,7 +241,7 @@ const incidentDetail = {
       const i = s.incidents.find((x) => x.id === id);
       const zt = s.tele.zones[i.zone];
       const z = zoneById(i.zone);
-      return `<span class="${zt.status !== 'normal' ? 'txt-warn' : 'txt-ok'}">${icon(SEV[zt.status].icon, 14)} ${zt.status === 'normal' ? 'Readings within normal range' : 'Readings below normal'}</span> — pressure ${fmt(zt.pressure, 0)} PSI (normal ~${z.basePressure}), flow ${zt.flowDeltaPct >= 0 ? '+' : ''}${fmt(zt.flowDeltaPct, 0)}% ${src('SIMULATED')}`;
+      return `<strong class="inc-cond ${zt.status !== 'normal' ? 'is-low' : ''}">${zt.status === 'normal' ? 'Readings within normal range' : 'Readings below normal'}</strong>, pressure ${fmt(zt.pressure, 0)} PSI (normal ~${z.basePressure}), flow ${zt.flowDeltaPct >= 0 ? '+' : ''}${fmt(zt.flowDeltaPct, 0)}% ${src('SIMULATED')}`;
     },
   },
   render({ id }) {
@@ -262,12 +262,12 @@ const incidentDetail = {
     const newRelated = S.reportClusters().find((c) => c.zone === i.zone);
     return `<a class="back" href="#/p/incidents">${icon('chev-l', 16)} Incidents</a>
     <div class="page-h page-h--inc"><div><div class="mono muted">${i.id}</div><h1>${esc(i.title)}</h1>
-      <div class="inc-badges"><span>Status:</span> ${incStatus(i)} <span>Severity:</span> ${sevBadge(i.severity)} <span>Type:</span> <span class="muted">${esc(i.type)}</span></div></div>
+      <dl class="inc-meta"><div><dt>Status</dt><dd>${esc(i.status)}</dd></div><div><dt>Severity</dt><dd class="${['High', 'Critical'].includes(i.severity) ? 'is-high' : ''}">${esc(i.severity)}</dd></div><div><dt>Type</dt><dd>${esc(i.type)}</dd></div></dl></div>
       <div class="page-a inc-actions">
-        ${!resolved ? `<button class="btn btn--primary btn--sm" data-action="wo-new" data-inc="${i.id}" data-pri="${i.severity === 'Low' ? 'Low' : i.severity === 'Medium' ? 'Medium' : 'High'}">${icon('wrench', 15)} Create Work Order</button>
-        <button class="btn btn--outline btn--sm" data-action="adv-new" data-inc="${i.id}">${icon('megaphone', 15)} Publish Advisory</button>
-        <button class="btn btn--ghost btn--sm" data-action="inc-update" data-id="${i.id}">${icon('file', 15)} Update Incident</button>
-        <button class="btn btn--success btn--sm" data-action="inc-resolve" data-id="${i.id}">${icon('check-circle', 15)} Resolve Incident</button>` : `<span class="muted">Resolved ${fmtDateTime(i.resolvedAt)}</span>`}
+        ${!resolved ? `<button class="btn btn--primary btn--sm" data-action="wo-new" data-inc="${i.id}" data-pri="${i.severity === 'Low' ? 'Low' : i.severity === 'Medium' ? 'Medium' : 'High'}">Create Work Order</button>
+        <button class="btn btn--outline btn--sm" data-action="adv-new" data-inc="${i.id}">Publish Advisory</button>
+        <button class="btn btn--outline btn--sm" data-action="inc-update" data-id="${i.id}">Update Incident</button>
+        <button class="btn btn--outline btn--sm" data-action="inc-resolve" data-id="${i.id}">Resolve Incident</button>` : `<span class="muted">Resolved ${fmtDateTime(i.resolvedAt)}</span>`}
       </div></div>
     ${newRelated && !resolved ? alertBanner('info', `${newRelated.reports.length} new resident report${newRelated.reports.length > 1 ? 's' : ''} in ${z.short} not yet linked`, '', `<button class="btn btn--sm btn--outline" data-action="inbox-link" data-zone="${i.zone}" data-inc="${i.id}">Link as evidence</button>`) : ''}
     ${woDone && !resolved ? alertBanner('normal', 'All work orders completed', 'Confirm that operational readings have recovered, then resolve the incident to notify residents.') : ''}
@@ -279,17 +279,17 @@ const incidentDetail = {
             <div><dt>Detection time</dt><dd>${fmtDateTime(i.detectedAt)}</dd></div>
             <div><dt>Affected zones</dt><dd>${i.zones.map((zz) => esc(zoneById(zz).name)).join(', ')}<br/><span class="muted sm">${esc(z.barangays.join(', '))}</span></dd></div>
             <div><dt>Est. affected connections</dt><dd>${fmt(i.connections)} ${src('ESTIMATED')}</dd></div>
-            <div><dt>Critical facilities</dt><dd>${fac.length ? fac.map((f) => `${icon('hospital', 13)} ${esc(f.name)}`).join('<br/>') : 'None in affected area'}</dd></div>
+            <div><dt>Critical facilities</dt><dd>${fac.length ? fac.map((f) => esc(f.name)).join('<br/>') : 'None in affected area'}</dd></div>
             <div class="kv-wide"><dt>Current operational condition</dt><dd data-region="live">${this.regions.live({ id })}</dd></div>
           </dl>`
         )}
         ${card(
           'Evidence',
           `<div class="evg">
-            <div class="evg-i"><div class="evg-h">${icon('users', 16)} Resident reports ${src('RESIDENT REPORTED')}</div><div class="evg-v">${reps.length}</div><div class="evg-d">${br.map((b) => `${b.n} ${esc(b.label)}`).join(', ') || 'No reports linked'}</div></div>
-            <div class="evg-i"><div class="evg-h">${icon('gauge', 16)} Pressure readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].pressure, 0)} <small>PSI</small></div><div class="evg-d">Normal ~${z.basePressure} PSI ${src('SIMULATED')}</div></div>
-            <div class="evg-i"><div class="evg-h">${icon('activity', 16)} Flow readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].flow, 1)} <small>L/s</small></div><div class="evg-d">${s.tele.zones[i.zone].flowDeltaPct >= 0 ? '+' : ''}${fmt(s.tele.zones[i.zone].flowDeltaPct, 0)}% vs expected ${src('SIMULATED')}</div></div>
-            <div class="evg-i"><div class="evg-h">${icon('zap', 16)} Equipment & area alerts</div><div class="evg-v">${equipAlerts.length}</div><div class="evg-d">${equipAlerts.map((a) => esc(a.title)).join('; ') || 'None'}</div></div>
+            <div class="evg-i"><div class="evg-h">Resident reports ${src('RESIDENT REPORTED')}</div><div class="evg-v">${reps.length}</div><div class="evg-d">${br.map((b) => `${b.n} ${esc(b.label)}`).join(', ') || 'No reports linked'}</div></div>
+            <div class="evg-i"><div class="evg-h">Pressure readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].pressure, 0)} <small>PSI</small></div><div class="evg-d">Normal ~${z.basePressure} PSI ${src('SIMULATED')}</div></div>
+            <div class="evg-i"><div class="evg-h">Flow readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].flow, 1)} <small>L/s</small></div><div class="evg-d">${s.tele.zones[i.zone].flowDeltaPct >= 0 ? '+' : ''}${fmt(s.tele.zones[i.zone].flowDeltaPct, 0)}% vs expected ${src('SIMULATED')}</div></div>
+            <div class="evg-i"><div class="evg-h">Equipment & area alerts</div><div class="evg-v">${equipAlerts.length}</div><div class="evg-d">${equipAlerts.map((a) => esc(a.title)).join('; ') || 'None'}</div></div>
           </div>
           <div data-region="cond">${incCondition(i)}</div>
           ${i.evidence?.length ? `<p class="sm muted">Evidence confirmed by operator at creation: ${i.evidence.map(esc).join(', ')}</p>` : ''}
@@ -394,28 +394,74 @@ function woProgress(w) {
   </div>`;
 }
 
-function maintTable(rows) {
-  const day = 864e5;
-  const when = (r) => {
-    if (!r.nextMaint) return '<span class="muted">Not scheduled</span>';
-    const d = Math.round(Math.abs(r.due) / day);
-    if (r.due < 0) return `<div class="wo-due is-late"><span>${fmtDate(r.nextMaint)}</span><small>${icon('alert', 12)} Overdue ${d || 1}d</small></div>`;
-    return `<div class="wo-due ${r.due < 14 * day ? 'is-soon' : ''}"><span>${fmtDate(r.nextMaint)}</span><small>${d ? `in ${d}d` : 'today'}</small></div>`;
-  };
-  const state = (r) => (!r.nextMaint ? '<span class="muted">No schedule</span>' : `<span class="mt-state"><span class="sys-dot sys-dot--${r.due < 0 ? 'warn' : r.due < 14 * day ? 'info' : 'ok'}" aria-hidden="true"></span>${r.due < 0 ? 'Overdue' : r.due < 14 * day ? 'Due soon' : 'Scheduled'}</span>`);
-  return `<div class="card wo-list">${table(
+// ---------------------------------------------------------------- maintenance needs
+// Expected service life by asset type (years): [maintenance from, end of life].
+// Booster pumps 10-15 y (residential booster pump guidance), PVC or metal pipes 20-50 y,
+// pressure gauges 5-10 y. Other asset types are assessed on failures and condition only.
+const SERVICE_LIFE = [
+  { test: (a) => a.type === 'Pump', label: 'pump', life: [10, 15] },
+  { test: (a) => a.type === 'Pipeline', label: 'pipe', life: [20, 50] },
+  { test: (a) => /gauge|sensor/i.test(`${a.type} ${a.name}`), label: 'pressure gauge', life: [5, 10] },
+];
+const YEAR_MS = 365 * 864e5;
+
+// Why an asset needs maintenance now (age, failure log, condition), or null if it does not.
+export function maintenanceNeed(a, workOrders, now = Date.now()) {
+  const rule = SERVICE_LIFE.find((r) => r.test(a));
+  const age = a.installed ? new Date(now).getFullYear() - a.installed : null;
+  const last = a.lastMaint || 0;
+  // failures in the last 12 months: the asset's failure log plus completed repairs from incidents
+  const repairs = workOrders.filter((w) => w.assetId === a.id && w.incidentId && w.status === 'Completed').map((w) => ({ at: w.completion?.at || w.createdAt, text: w.description }));
+  const failures = [...(a.failures || []), ...repairs].filter((f) => f.at >= now - YEAR_MS);
+  const unresolved = failures.filter((f) => f.at > last);
+  const reasons = [];
+  let level = 0; // 1 = due, 2 = overdue
+  if (rule && age != null && age >= rule.life[0]) {
+    const beyond = age > rule.life[1];
+    const recent = last && now - last < (beyond ? YEAR_MS / 2 : YEAR_MS);
+    if (!recent) {
+      reasons.push(beyond ? `${age} years old, past the ${rule.life[1]}-year service life of a ${rule.label}` : `${age} years old, within the ${rule.life[0]}-${rule.life[1]}-year end of life of a ${rule.label}`);
+      level = Math.max(level, beyond ? 2 : 1);
+    }
+  }
+  if (unresolved.length) {
+    reasons.push(`${unresolved.length} failure${unresolved.length > 1 ? 's' : ''} in the last 12 months, not serviced since`);
+    level = Math.max(level, unresolved.length >= 2 ? 2 : 1);
+  }
+  if (a.status === 'offline') (reasons.push('Currently offline'), (level = 2));
+  else if (a.status === 'warning') (reasons.push('Reporting a warning'), (level = Math.max(level, 1)));
+  if (!level) return null;
+  return { level, reasons, age, life: rule?.life || null, failures, wo: workOrders.find((w) => w.assetId === a.id && w.status !== 'Completed') };
+}
+
+let maintAll = false;
+function maintTable(assets, workOrders) {
+  const rows = assets
+    .map((a) => ({ a, need: maintenanceNeed(a, workOrders) }))
+    .filter((r) => maintAll || r.need)
+    .sort((x, y) => (y.need?.level || 0) - (x.need?.level || 0) || (y.need?.age || 0) - (x.need?.age || 0));
+  const needCount = assets.filter((a) => maintenanceNeed(a, workOrders)).length;
+  const ageText = (a, n) => (a.installed ? `${new Date().getFullYear() - a.installed} years${n?.life ? `<small>Expected ${n.life[0]}-${n.life[1]} years</small>` : ''}` : '<span class="muted">Not recorded</span>');
+  const state = (n) => (!n ? '<span class="muted">No action needed</span>' : `<strong class="mt-lvl ${n.level === 2 ? 'is-over' : ''}">${n.level === 2 ? 'Overdue' : 'Due'}</strong>`);
+  const desc = (a, n) => `${n.level === 2 ? 'Overdue' : 'Scheduled'} maintenance for ${a.name}: ${n.reasons.join('; ')}. Inspect, service and record the condition.`;
+  return `<div class="mt-bar"><p>${needCount ? `${needCount} asset${needCount > 1 ? 's need' : ' needs'} maintenance, based on age against expected service life, failures in the last 12 months and current condition.` : 'No asset needs maintenance right now, based on age, failures in the last 12 months and current condition.'}</p>
+      <label class="chk"><input type="checkbox" ${maintAll ? 'checked' : ''} data-change="mt-all"/> Show all assets</label></div>
+    <div class="card wo-list">${table(
     [
-      { label: 'Asset', render: (r) => `<div class="wo-id"><strong class="mono">${r.id}</strong><span>${esc(r.type)}</span></div>` },
-      { label: 'Name', render: (r) => `<div class="wo-task">${esc(r.name)}</div>` },
-      { label: 'Last serviced', render: (r) => `<span class="muted">${r.lastMaint ? fmtDate(r.lastMaint) : 'Not recorded'}</span>` },
-      { label: 'Next due', render: when },
-      { label: 'State', render: state },
-      { label: 'Work order', render: (r) => (r.wo ? `<a class="mono" href="#/p/work-orders/${r.wo.id}">${r.wo.id}</a> <span class="muted sm">${r.wo.status}</span>` : `<button class="btn btn--outline btn--xs" data-action="wo-new" data-asset="${r.id}" data-pri="Low" data-desc="Scheduled preventive maintenance for ${esc(r.name)}.">${icon('plus', 13)} Schedule</button>`) },
+      { label: 'Asset', render: (r) => `<div class="wo-id"><strong class="mono">${r.a.id}</strong><span>${esc(r.a.type)}</span></div>` },
+      { label: 'Name', render: (r) => `<div class="wo-task">${esc(r.a.name)}</div>` },
+      { label: 'Age', render: (r) => `<div class="mt-age">${ageText(r.a, r.need)}</div>` },
+      { label: 'Why', render: (r) => (r.need ? `<div class="mt-why">${r.need.reasons.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : `<span class="muted">${r.a.lastMaint ? `Serviced ${fmtDate(r.a.lastMaint)}` : 'Within service life, no recent failures'}</span>`) },
+      { label: 'State', render: (r) => state(r.need) },
+      { label: 'Work order', render: (r) => (r.need?.wo ? `<a class="mono" href="#/p/work-orders/${r.need.wo.id}">${r.need.wo.id}</a> <span class="muted sm">${r.need.wo.status}</span>` : r.need ? `<button class="btn btn--outline btn--xs" data-action="wo-new" data-asset="${r.a.id}" data-pri="${r.need.level === 2 ? 'High' : 'Medium'}" data-desc="${esc(desc(r.a, r.need))}">Schedule</button>` : '') },
     ],
     rows,
-    { empty: 'No assets on the maintenance schedule' }
-  )}</div>`;
+    { empty: 'No asset needs maintenance right now' }
+  )}</div>
+    <p class="fine mt-src">Expected service life: booster pumps 10-15 years, PVC or metal pipes 20-50 years, pressure gauges 5-10 years. Assets without an installation year are assessed on failures and condition only.</p>`;
 }
+
+registerInputs({ 'mt-all': (el) => ((maintAll = el.checked), go('#/p/work-orders')) });
 
 function woTarget(w, now) {
   if (w.status === 'Completed') return `<div class="wo-due"><span>${fmtDateTime(w.target)}</span><small>Completed</small></div>`;
@@ -439,11 +485,9 @@ const workOrders = {
     const dueSoon = open.filter((w) => w.target >= now && w.target < now + 24 * 3600e3);
     const urgent = open.filter((w) => w.priority === 'High' || w.priority === 'Critical');
     // Preventive maintenance schedule (formerly its own page): assets by next due date.
-    const maint = s.assets
-      .map((a) => ({ ...a, due: a.nextMaint ? a.nextMaint - now : Infinity, wo: all.find((w) => w.assetId === a.id && w.status !== 'Completed') }))
-      .sort((a, b) => a.due - b.due);
-    const maintLate = maint.filter((r) => r.due < 0);
-    const maintSoon = maint.filter((r) => r.due >= 0 && r.due < 14 * 864e5);
+    const needs = s.assets.map((a) => maintenanceNeed(a, all)).filter(Boolean);
+    const maintLate = needs.filter((n) => n.level === 2);
+    const maintSoon = needs.filter((n) => n.level === 1);
     const next = [...open].sort((a, b) => a.target - b.target)[0];
     // Stage counts for the open pipeline (Completed is shown separately).
     const stages = WO_STEPS.filter((x) => x !== 'Completed').map((x) => ({ x, n: open.filter((w) => w.status === x).length }));
@@ -462,15 +506,15 @@ const workOrders = {
             <div class="kpi-sub">${done.length} completed, ${all.length} total</div></div></div>
           <div class="wo-bar" role="img" aria-label="Open work orders by stage">${stages.filter((b) => b.n).map((b, k) => `<span class="wo-bar-s wo-bar-s--${k}" style="flex:${b.n}" title="${b.x}: ${b.n}"></span>`).join('') || '<span class="wo-bar-s is-empty" style="flex:1"></span>'}</div>
           <ul class="wo-stages">${stages.map((b, k) => `<li class="${b.n ? '' : 'is-zero'}"><span class="wo-key wo-bar-s--${k}" aria-hidden="true"></span><span>${b.x}</span><strong>${b.n}</strong></li>`).join('')}</ul>
-          <div class="kp-foot"><span>${next ? `Next due <strong class="mono">${next.id}</strong>, ${fmtDateTime(next.target)}` : 'No open work orders'}</span><span class="kp-flag kp-flag--${flag[0]}">${flag[1]}</span></div>
+          <div class="kp-foot"><span>${next ? `Next due <strong>${next.id}</strong>, ${fmtDateTime(next.target)}` : 'No open work orders'}</span><span class="kp-flag kp-flag--${flag[0]}">${flag[1]}</span></div>
         </section>
         ${kpi({ label: 'Overdue', value: overdue.length, sub: overdue.length ? `<span class="txt-warn">Past target time</span>` : 'All within target', sev: overdue.length ? 'warning' : null })}
         ${kpi({ label: 'Due in 24 hours', value: dueSoon.length, sub: dueSoon.length ? `Earliest ${fmtDateTime(Math.min(...dueSoon.map((w) => w.target)))}` : 'Nothing due today' })}
         ${kpi({ label: 'High priority', value: urgent.length, sub: urgent.length ? 'Open high / critical jobs' : 'No high-priority jobs', sev: urgent.length ? 'critical' : null })}
-        ${kpi({ label: 'Maintenance overdue', value: maintLate.length, sub: `${maintSoon.length} more asset${maintSoon.length === 1 ? '' : 's'} due in 14 days`, sev: maintLate.length ? 'warning' : null })}
+        ${kpi({ label: 'Maintenance needed', value: needs.length, sub: needs.length ? `${maintLate.length} overdue, ${maintSoon.length} due` : 'Based on age and failures', sev: maintLate.length ? 'warning' : null })}
       </div>
-      ${tabs([{ id: 'open', label: 'Open', count: open.length }, { id: 'overdue', label: 'Overdue', count: overdue.length }, { id: 'completed', label: 'Completed', count: done.length }, { id: 'all', label: 'All', count: all.length }, { id: 'maintenance', label: 'Maintenance schedule', count: maintLate.length + maintSoon.length }], woFilter, 'wo-tab')}
-      ${woFilter === 'maintenance' ? maintTable(maint) : `<div class="card wo-list">${table(
+      ${tabs([{ id: 'open', label: 'Open', count: open.length }, { id: 'overdue', label: 'Overdue', count: overdue.length }, { id: 'completed', label: 'Completed', count: done.length }, { id: 'all', label: 'All', count: all.length }, { id: 'maintenance', label: 'Maintenance schedule', count: needs.length }], woFilter, 'wo-tab')}
+      ${woFilter === 'maintenance' ? maintTable(s.assets, all) : `<div class="card wo-list">${table(
         [
           { label: 'Work order', render: (w) => `<div class="wo-id"><strong class="mono">${w.id}</strong><span>${w.incidentId ? `<span class="mono">${w.incidentId}</span>` : 'Preventive'}, <span class="mono">${w.assetId}</span></span></div>` },
           { label: 'Task', render: (w) => `<div class="clamp2 wo-task">${esc(w.description)}</div>` },
@@ -497,7 +541,7 @@ function respondersCard() {
     ${list.length ? `<div class="rsp-wrap"><table class="tbl rsp-t"><thead><tr><th>Name</th><th>Sign-in email</th><th>Credentials sent to</th><th>Open jobs</th><th>Credentials</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
       ${list.map((r) => `<tr>
         <td><strong>${esc(r.name)}</strong>${r.phone ? `<div class="rsp-sub">${esc(r.phone)}</div>` : ''}</td>
-        <td class="mono">${esc(r.loginEmail)}</td>
+        <td>${esc(r.loginEmail)}</td>
         <td>${esc(r.contactEmail)}</td>
         <td>${open(r)}</td>
         <td><div class="rsp-cred">${cred(r)}</div></td>
@@ -513,7 +557,7 @@ function openResponderModal() {
     `<div id="rsp-body"><form class="form" id="rsp-form" onsubmit="return false">
       ${field('Full name', '<input id="rsp-name" autocomplete="off" placeholder="e.g. Ramon Dacut"/>', { id: 'rsp-name', req: true })}
       ${field('Email', '<input id="rsp-email" type="email" autocomplete="off" placeholder="name@example.com"/>', { id: 'rsp-email', req: true, hint: 'The sign-in email and temporary password are sent here.' })}
-      ${field('Mobile number', '<input id="rsp-phone" type="tel" autocomplete="off" placeholder="+63 9xx xxx xxxx"/>', { id: 'rsp-phone', optional: true })}
+      ${field('Mobile number', phoneInput('rsp-phone'), { id: 'rsp-phone', optional: true })}
       <div class="auth-err" role="alert" hidden></div>
       <div class="as-a"><button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="rsp-create">Create account and send</button></div>
     </form></div>`
@@ -525,7 +569,7 @@ function responderCreated(r) {
   if (!body) return;
   body.innerHTML = `<div class="rsp-done">
       <p>${B.FB_ENABLED ? `The account for <strong>${esc(r.name)}</strong> is ready. The credentials below are being emailed to <strong>${esc(r.contactEmail)}</strong>.` : `Offline demo: <strong>${esc(r.name)}</strong> was added to the list. No account is created and no email is sent.`}</p>
-      <dl class="rsp-kv"><div><dt>Sign-in email</dt><dd class="mono">${esc(r.loginEmail)}</dd></div><div><dt>Temporary password</dt><dd class="mono">${esc(r.tempPassword)}</dd></div></dl>
+      <dl class="rsp-kv"><div><dt>Sign-in email</dt><dd>${esc(r.loginEmail)}</dd></div><div><dt>Temporary password</dt><dd class="pw-text">${esc(r.tempPassword)}</dd></div></dl>
       <p class="fine">They are asked to set their own password the first time they sign in. This password is not shown again.</p>
       <div class="as-a"><button class="btn btn--primary" data-action="ov-close">Done</button></div>
     </div>`;
@@ -537,10 +581,11 @@ register({
     const v = (id) => document.getElementById(id).value.trim();
     const name = v('rsp-name').replace(/\s+/g, ' ');
     const contactEmail = v('rsp-email').toLowerCase();
-    const phone = v('rsp-phone');
+    const phone = phoneValue('rsp-phone');
     const err = document.querySelector('#rsp-form .auth-err');
     const fail = (m) => ((err.hidden = false), (err.innerHTML = `<span>${esc(m)}</span>`));
     if (!name) return fail('Enter the full name of the responder.');
+    if (phone === null) return fail('Enter the 10 digits of the mobile number after +63, starting with 9.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) return fail('Enter a valid email address.');
     if (S.responders().some((r) => r.contactEmail === contactEmail)) return fail('A responder with this email is already listed.');
     err.hidden = true;
@@ -583,7 +628,7 @@ register({
 
 // Field report from the responder app (inspection, repair, photos, verification, assistance requests).
 function fieldReport(w) {
-  const f = w.field;
+  const f = w.field || { log: [], photos: [], assistance: [] };
   const list = (a) => esc((a || []).join(', ') || '—');
   const rows = [
     f.arrivedAt && ['Arrived on site', fmtDateTime(f.arrivedAt)],
@@ -598,13 +643,18 @@ function fieldReport(w) {
     f.verify?.reason && ['Reason / next step', `${esc(f.verify.reason)} — ${esc(f.verify.next || '')}`],
   ].filter(Boolean);
   const ast = (f.assistance || []).map((a) => `<li><strong>${esc(a.reason)}</strong><span>${esc(a.text || '')}</span><time>${fmtDateTime(a.at)}</time></li>`).join('');
-  const ph = (f.photos || []).map((p) => `<figure><img src="${p.src}" alt="${esc(p.caption || p.stage + ' photo')}"/><figcaption>${esc({ before: 'Before', during: 'During', after: 'After' }[p.stage] || '')}${p.caption ? ` — ${esc(p.caption)}` : ''} · ${fmtTime(p.at)}</figcaption></figure>`).join('');
+  const legacy = ['before', 'after'].filter((k) => w.photos?.[k]).map((k) => ({ stage: k, src: w.photos[k], caption: '', at: null }));
+  const ph = [...(f.photos || []), ...legacy]
+    .sort((a, b) => ['before', 'during', 'after'].indexOf(a.stage) - ['before', 'during', 'after'].indexOf(b.stage))
+    .map((p) => `<figure><img src="${p.src}" alt="${esc(p.caption || p.stage + ' photo')}"/><figcaption>${esc({ before: 'Before repair', during: 'During repair', after: 'After repair' }[p.stage] || 'Photo')}${p.caption ? `, ${esc(p.caption)}` : ''}${p.at ? `, ${fmtTime(p.at)}` : ''}</figcaption></figure>`)
+    .join('');
   return card(
     'Field report',
-    `${rows.length ? `<dl class="kv">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : '<p class="muted sm">Nothing recorded yet.</p>'}
+    `${rows.length ? `<dl class="kv">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : `<p class="muted sm">Nothing recorded yet. Findings appear here as ${esc(w.team || 'the responder')} works through the job.</p>`}
     ${ast ? `<h4 class="sec-t sm">Assistance requested</h4><ul class="fr-assist">${ast}</ul>` : ''}
-    ${ph ? `<h4 class="sec-t sm">Field photos</h4><div class="fr-photos">${ph}</div>` : ''}`,
-    { sub: 'Recorded by the responder on site', actions: src('FIELD') }
+    <h4 class="sec-t sm">Photos</h4>${ph ? `<div class="fr-photos">${ph}</div>` : '<p class="muted sm">No photos from the field yet.</p>'}
+    ${w.completion ? `<dl class="kv kv--3 mt"><div><dt>Completed</dt><dd>${fmtDateTime(w.completion.at)}</dd></div><div><dt>Verification reading</dt><dd>${esc(w.completion.reading || '—')}</dd></div><div class="kv-wide"><dt>Repair notes</dt><dd>${esc(w.completion.notes || '—')}</dd></div></dl>` : ''}`,
+    { sub: `Recorded on site by ${esc(w.team || 'the responder')}`, actions: src('FIELD') }
   );
 }
 
@@ -621,9 +671,19 @@ const workOrderDetail = {
     const items = WO_STEPS.map((x, k) => ({ label: x, at: w.history.find((h) => h.status === x)?.at, state: k <= idx ? 'done' : k === idx + 1 ? 'current' : 'todo' }));
     const overdue = w.status !== 'Completed' && w.target < Date.now();
     const zt = asset?.zone && s.tele.zones[asset.zone];
+    // Assigned to a responder: progress, photos and findings come from the responder app, so the
+    // operator follows along here instead of moving the steps.
+    const byResp = !!w.responder;
+    const log = [...(w.field?.log || [])].sort((a, b) => b.at - a.at);
+    const last = log[0] || [...w.history].reverse()[0];
+    const action = w.status === 'Completed'
+      ? `<span class="muted">Completed ${fmtDateTime(w.completion?.at || w.history.at(-1)?.at)}</span>`
+      : byResp
+        ? `<div class="wo-live"><span>Last update from ${esc(w.team || 'the responder')}</span><strong>${last ? relTime(last.at) : 'None yet'}</strong></div>`
+        : next ? `<button class="btn btn--primary" data-action="wo-advance" data-id="${w.id}" data-next="${next}">${next === 'Completed' ? 'Complete work order' : `Move to ${next}`}</button>` : '';
     return `<a class="back" href="#/p/work-orders">${icon('chev-l', 16)} Work Orders</a>
       <div class="page-h"><div><div class="mono muted">${w.id}</div><h1>${esc(w.description.split('.')[0])}</h1><div class="inc-badges">${woStatusBadge(w)} ${priorityBadge(w.priority)} ${overdue ? status('warning', 'Overdue') : ''}</div></div>
-      <div class="page-a">${next ? `<button class="btn btn--primary" data-action="wo-advance" data-id="${w.id}" data-next="${next}">${icon('arrow', 15)} ${next === 'Completed' ? 'Complete work order' : `Move to ${next}`}</button>` : `<span class="muted">Completed ${fmtDateTime(w.completion?.at)}</span>`}</div></div>
+      <div class="page-a">${action}</div></div>
       <div class="inc-grid">
         <div class="inc-main">
           ${card(
@@ -638,28 +698,29 @@ const workOrderDetail = {
             <div class="kv-wide"><dt>Description</dt><dd>${esc(w.description)}</dd></div>
             </dl>`
           )}
-          ${card(
+          ${byResp ? fieldReport(w) : card(
             'Repair evidence',
             `<div class="photos">${['before', 'after']
               .map(
                 (k) => `<div class="photo-slot"><div class="photo-l">${k === 'before' ? 'Before photo' : 'After photo'}</div>${
                   w.photos[k]
                     ? `<img src="${w.photos[k]}" alt="${k} repair photo"/>`
-                    : `<label class="upload upload--sm">${icon('camera', 20)}<span><strong>Attach ${k} photo</strong><em>Field team upload</em></span><input type="file" accept="image/*" class="sr-only" data-change="wo-photo" data-id="${w.id}" data-k="${k}"/></label>`
+                    : uploadBox(`the ${k} photo`, `<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-change="wo-photo" data-id="${w.id}" data-k="${k}"/>`, { sm: true })
                 }</div>`
               )
               .join('')}</div>
             ${w.completion ? `<dl class="kv kv--3 mt"><div><dt>Completion timestamp</dt><dd>${fmtDateTime(w.completion.at)}</dd></div><div><dt>Verification reading</dt><dd>${esc(w.completion.reading || '—')} ${src('MANUAL')}</dd></div><div class="kv-wide"><dt>Repair notes</dt><dd>${esc(w.completion.notes || '—')}</dd></div></dl>` : ''}`
           )}
-          ${w.field ? fieldReport(w) : ''}
+          ${!byResp && w.field ? fieldReport(w) : ''}
           ${card(
-            'Technician notes',
-            `${w.notes.length ? `<ul class="notes">${w.notes.map((n) => `<li><div class="notes-h"><strong>${esc(n.by)}</strong><time>${fmtDateTime(n.at)}</time></div><p>${esc(n.text)}</p></li>`).join('')}</ul>` : '<p class="muted sm">No technician notes yet.</p>'}
-            ${w.status !== 'Completed' ? `<div class="note-add"><label class="sr-only" for="wo-note-in">Add technician note</label><input id="wo-note-in" placeholder="e.g. Crew on site, isolating the section valve"/><button class="btn btn--outline btn--sm" data-action="wo-note" data-id="${w.id}">Add note</button></div>` : ''}`
+            'Notes',
+            `${w.notes.length ? `<ul class="notes">${w.notes.map((n) => `<li><div class="notes-h"><strong>${esc(n.by)}</strong><time>${fmtDateTime(n.at)}</time></div><p>${esc(n.text)}</p></li>`).join('')}</ul>` : `<p class="muted sm">No notes yet.${byResp ? ` Notes you add here are visible to ${esc(w.team)}.` : ''}</p>`}
+            ${w.status !== 'Completed' ? `<div class="note-add"><label class="sr-only" for="wo-note-in">Add a note</label><input id="wo-note-in" placeholder="${byResp ? `e.g. Bring a 2-inch coupling; residents report the leak near the chapel` : 'e.g. Crew on site, isolating the section valve'}"/><button class="btn btn--outline btn--sm" data-action="wo-note" data-id="${w.id}">Add note</button></div>` : ''}`
           )}
         </div>
         <div class="inc-side">
-          ${card('Progress', timeline(items))}
+          ${card('Progress', timeline(items), byResp ? { sub: `Updated by ${esc(w.team || 'the responder')} in the field` } : {})}
+          ${byResp ? card('Field activity', log.length ? `<ul class="wo-act">${log.slice(0, 12).map((l) => `<li><span>${esc(l.text)}</span><time>${esc(l.by || '')}${l.by ? ', ' : ''}${fmtDateTime(l.at)}</time></li>`).join('')}</ul>` : '<p class="muted sm">No activity yet. Each step the responder records appears here.</p>') : ''}
           ${zt ? card('Live zone readings', `<dl class="kv"><div><dt>${esc(zoneById(asset.zone).short)} pressure</dt><dd><strong>${fmt(zt.pressure, 0)} PSI</strong> ${src('SIMULATED')}</dd></div><div><dt>Flow vs expected</dt><dd>${zt.flowDeltaPct >= 0 ? '+' : ''}${fmt(zt.flowDeltaPct, 0)}% ${src('SIMULATED')}</dd></div></dl><p class="fine">Use for verification after repair.</p>`) : ''}
         </div>
       </div>`;
@@ -672,9 +733,10 @@ registerInputs({
     const f = el.files?.[0];
     if (!f) return;
     try {
-      S.setWorkOrderPhoto(el.dataset.id, el.dataset.k, await readImage(f, 520));
+      await S.setWorkOrderPhoto(el.dataset.id, el.dataset.k, S.isRemote() ? await readImage(f, 1280, 0.82) : await readImage(f, 520));
     } catch (e) {
-      S.toast('Could not read image', 'error');
+      console.error(e);
+      S.toast(e?.code ? `Could not upload the photo (${e.code})` : 'Could not read that photo', 'error');
     }
   },
 });

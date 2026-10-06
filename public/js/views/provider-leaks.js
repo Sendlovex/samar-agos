@@ -42,7 +42,7 @@ function rainNow() {
 const tdrReliability = (mmh) => (mmh == null ? 'unknown' : mmh >= RAIN_HEAVY ? 'unreliable' : mmh >= RAIN_MODERATE ? 'reduced' : 'reliable');
 
 // ---------------------------------------------------------------- analysis
-function analyse() {
+export function analyse() {
   const s = st();
   const rain = rainNow();
   const rel = tdrReliability(rain.mmh);

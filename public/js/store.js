@@ -99,11 +99,23 @@ export async function reset(notify = true) {
   }
 }
 
+// With the database connected, the confirmation appears only after the server accepted the change,
+// so a rejected save is never reported as done.
 export function commit(msg, kind) {
   save();
-  remote?.flush().catch((e) => toast(`Could not save to the server (${e.code || e.message})`, 'error'));
   emit('change');
-  if (msg) toast(msg, kind);
+  if (!remote) return msg && toast(msg, kind);
+  remote
+    .flush()
+    .then(() => msg && toast(msg, kind))
+    .catch((e) =>
+      toast(
+        e?.code === 'permission-denied'
+          ? `Not saved: the server did not allow this change${msg ? ` (${msg.toLowerCase()})` : ''}. It will disappear when the page refreshes.`
+          : `Not saved to the server (${e?.code || e?.message}). Check your connection and try again.`,
+        'error'
+      )
+    );
 }
 
 // ---------------------------------------------------------------- remote (Firebase) bridge
@@ -114,6 +126,8 @@ export function setRemote(r) {
   remote = r;
 }
 export const isRemote = () => !!remote;
+// Photos go to Firebase Storage when connected (the link is stored); offline they stay inline.
+const storeImage = (path, dataUrl) => (remote && dataUrl && dataUrl.startsWith('data:') ? remote.upload(path, dataUrl) : dataUrl);
 const session = () => remote?.getSession() || null;
 const SHARED = ['reports', 'incidents', 'workOrders', 'advisories', 'notifications', 'altWater', 'emergencyTanks', 'assets'];
 const SORT = {
@@ -795,6 +809,7 @@ async function nextId(kind, local) {
 export async function submitReport(data) {
   const id = await nextId('report', () => `WR-${YEAR()}-${String(state.reportSeq++).padStart(4, '0')}`);
   const me = session();
+  const photo = data.photo ? await storeImage(`reports/${me?.uid || 'local'}/${id}.jpg`, data.photo) : null;
   const r = {
     id,
     type: data.type,
@@ -811,7 +826,7 @@ export async function submitReport(data) {
     mine: true,
     reporterUid: me?.uid || null,
     reporterName: me ? RESIDENT.name : null,
-    photo: data.photo || null,
+    photo,
     updates: [{ at: Date.now(), status: 'submitted', text: 'Report received. Awaiting provider review.' }],
     residentResponse: null,
   };
@@ -1006,7 +1021,7 @@ export function advanceWorkOrder(id, completion) {
     return commit(`${id} moved to ${next}`);
   }
   workOrderEffects(wo, next);
-  commit(`${id} → ${next}`);
+  commit(`${id} moved to ${next}`);
 }
 
 // Incident, report and asset updates that follow a work order step.
@@ -1069,9 +1084,10 @@ export function addWorkOrderNote(id, text) {
   commit('Technician note added');
 }
 
-export function setWorkOrderPhoto(id, which, dataUrl) {
+export async function setWorkOrderPhoto(id, which, dataUrl) {
   const wo = state.workOrders.find((w) => w.id === id);
-  wo.photos[which] = dataUrl;
+  if (remote) toast('Uploading photo…', 'info');
+  wo.photos[which] = await storeImage(`workOrders/${id}/${which}-${Date.now()}.jpg`, dataUrl);
   commit(`${which === 'before' ? 'Before' : 'After'} photo attached`);
 }
 
@@ -1144,12 +1160,14 @@ export function fieldSaveRepair(id, data, msg = 'Repair details saved') {
   fieldOf(wo).repair = { ...data, at: Date.now(), by: fieldBy() };
   commit(msg);
 }
-export function fieldAddPhoto(id, photo) {
+export async function fieldAddPhoto(id, photo) {
   const wo = woById(id);
   if (!wo) return;
   const f = fieldOf(wo);
   if (f.photos.length >= 9) return toast('Photo limit reached (9 per work order). Remove one to add another.', 'error');
-  f.photos.push({ ...photo, at: Date.now(), by: fieldBy() });
+  if (remote) toast('Uploading photo…', 'info');
+  const src = await storeImage(`workOrders/${id}/${photo.stage}-${Date.now()}.jpg`, photo.src);
+  f.photos.push({ ...photo, src, at: Date.now(), by: fieldBy() });
   fieldLog(wo, `${{ before: 'Before-repair', during: 'During-repair', after: 'After-repair' }[photo.stage] || 'Field'} photo added`);
   commit('Photo added');
 }

@@ -10,7 +10,7 @@ const URL =
   '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation' +
   '&hourly=temperature_2m,precipitation,precipitation_probability' +
   '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_gusts_10m_max';
-const REFRESH_MS = 30 * 60 * 1000;
+const REFRESH_MS = 15 * 60 * 1000; // Open-Meteo updates current conditions every 15 minutes
 const CACHE_KEY = 'samaragos.weather.v1';
 
 // Real climate data (Open-Meteo, ERA5 reanalysis): 10-year daily normals and the last 30 days of observed rain.
@@ -145,6 +145,10 @@ async function load() {
 load();
 loadClimate();
 setInterval(load, REFRESH_MS);
+// Refresh when the tab comes back into view if the data is older than the refresh interval.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && (!data || Date.now() - data.fetchedAt > REFRESH_MS)) load();
+});
 setInterval(loadClimate, 6 * 3600 * 1000);
 
 // ---------------------------------------------------------------- presentation helpers

@@ -4,7 +4,7 @@
 import * as S from '../store.js';
 import * as B from '../backend.js';
 import { zoneById, PROVIDER_USER, RESPONDER_USER } from '../data.js';
-import { icon, status, src, card, kpi, empty, register, registerInputs, openModal, closeOverlay, field, SEV, busy, confirmDialog, priorityBadge, alertBanner, activityLog } from '../ui.js';
+import { uploadBox, icon, status, src, card, kpi, empty, register, registerInputs, openModal, closeOverlay, field, SEV, busy, confirmDialog, priorityBadge, alertBanner, activityLog } from '../ui.js';
 import { renderMap } from '../map.js';
 import { esc, fmt, fmtTime, fmtDateTime, relTime, readImage, toLL } from '../util.js';
 import { go } from '../app.js';
@@ -107,27 +107,40 @@ function nextAction(wo) {
 }
 const actionBtn = (wo, cls = 'btn--primary') => {
   const n = nextAction(wo);
-  return n.href ? `<a class="btn ${cls}" href="${n.href}">${icon(n.icon, 16)} ${n.label}</a>` : `<button class="btn ${cls}" data-action="${n.action}" data-id="${wo.id}">${icon(n.icon, 16)} ${n.label}</button>`;
+  return n.href ? `<a class="btn ${cls}" href="${n.href}">${n.label}</a>` : `<button class="btn ${cls}" data-action="${n.action}" data-id="${wo.id}">${n.label}</button>`;
 };
 
 // Shared header for every workflow screen — the same page header as the operator Work Order page,
 // with the next required action on the right and the Assigned → Verify tracker underneath.
 function woHead(wo, here, title) {
   const s = stageOf(wo);
-  const overdue = wo.status !== 'Completed' && wo.target && wo.target < Date.now();
+  const done = wo.status === 'Completed';
+  const overdue = !done && wo.target && wo.target < Date.now();
+  const n = nextAction(wo);
+  const btn = n.href === location.hash ? '' : n.href ? `<a class="btn btn--primary" href="${n.href}">${n.label}</a>` : `<button class="btn btn--primary" data-action="${n.action}" data-id="${wo.id}">${n.label}</button>`;
+  const hrefs = [`#/c/jobs/${wo.id}`, `#/c/jobs/${wo.id}`, `#/c/inspect/${wo.id}`, `#/c/repair/${wo.id}`, `#/c/verify/${wo.id}`];
+  const facts = [
+    `<span class="fwh-st">${esc(statusWord(wo)[1])}</span>`,
+    `<span class="fxa-pri ${['Critical', 'High'].includes(wo.priority) ? 'is-urgent' : ''}">${esc(wo.priority || 'Medium')} priority</span>`,
+    wo.target && !done ? `<span class="${overdue ? 'is-late' : ''}">${overdue ? 'Overdue, target was' : 'Target'} ${fmtDateTime(wo.target)}</span>` : '',
+    wo.location ? `<span>${esc(wo.location)}</span>` : '',
+  ].filter(Boolean);
   return `<a class="back" href="#/c/jobs">${icon('chev-l', 16)} My Assignments</a>
-    <div class="page-h"><div><div class="mono muted">${esc(wo.id)} · ${esc(title)}</div><h1>${esc(issueOf(wo))}</h1>
-      <div class="inc-badges">${statusBadge(wo)} ${priorityBadge(wo.priority || 'Medium')} ${overdue ? status('warning', 'Overdue') : ''}</div></div>
-      <div class="page-a">${nextAction(wo).href === location.hash ? '' : actionBtn(wo)}</div></div>
-    <section class="card fx-track"><div class="card-b">
-      <ol class="rsvc-steps fx-steps" aria-label="Workflow: ${esc(STAGES[Math.min(s, 4)])}">${STAGES.map((t, i) => {
-        const href = [`#/c/jobs/${wo.id}`, `#/c/jobs/${wo.id}`, `#/c/inspect/${wo.id}`, `#/c/repair/${wo.id}`, `#/c/verify/${wo.id}`][i];
-        const cls = i < s ? 'is-done' : i === s ? 'is-now' : '';
-        const inner = `<span class="rsvc-dot">${i < s ? icon('check', 12) : ''}</span><span>${t}</span>`;
-        return `<li class="${cls} ${i === here ? 'is-here' : ''}">${i <= s && i >= 2 ? `<a href="${href}">${inner}</a>` : inner}</li>`;
+    <section class="fwh">
+      <div class="fwh-top">
+        <div class="fwh-id"><span class="mono">${esc(wo.id)}</span><span>${esc(title)}</span></div>
+        <h1>${esc(issueOf(wo))}</h1>
+        <div class="fwh-facts">${facts.join('')}</div>
+      </div>
+      <div class="fwh-a">${btn}</div>
+      <ol class="fwh-steps" aria-label="Step ${Math.min(s + 1, 5)} of 5: ${esc(STAGES[Math.min(s, 4)])}">${STAGES.map((t, k) => {
+        const cls = done || k < s ? 'is-done' : k === s ? 'is-now' : '';
+        const label = `<span class="fwh-bar"></span><span class="fwh-l"><small>Step ${k + 1}</small>${esc(t)}</span>`;
+        const link = k <= s && k >= 2 && k !== here;
+        return `<li class="${cls} ${k === here ? 'is-here' : ''}" ${k === here ? 'aria-current="step"' : ''}>${link ? `<a href="${hrefs[k]}">${label}</a>` : label}</li>`;
       }).join('')}</ol>
-      <p class="fx-hint">${icon('info', 14)} ${nextHint(wo)}</p>
-    </div></section>`;
+      <p class="fwh-hint">${esc(nextHint(wo))}</p>
+    </section>`;
 }
 function nextHint(wo) {
   const f = fieldOf(wo);
@@ -148,7 +161,7 @@ const chips = (name, list, sel, sec) =>
 const input = (sec, k, v, attrs = '') => `<input ${attrs} value="${esc(v ?? '')}" data-input="fx-in" data-sec="${sec}" data-k="${k}"/>`;
 const select = (sec, k, v, opts) => `<select data-change="fx-in" data-sec="${sec}" data-k="${k}">${['', ...opts].map((o) => `<option value="${esc(o)}" ${o === (v || '') ? 'selected' : ''}>${o ? esc(o) : 'Select…'}</option>`).join('')}</select>`;
 const textarea = (sec, k, v, ph) => `<textarea rows="3" placeholder="${esc(ph)}" data-input="fx-in" data-sec="${sec}" data-k="${k}">${esc(v || '')}</textarea>`;
-const errBox = (msg) => (msg ? `<div class="err" role="alert">${icon('alert', 14)} ${esc(msg)}</div>` : '');
+const errBox = (msg) => (msg ? `<div class="err" role="alert">${esc(msg)}</div>` : '');
 
 // ---------------------------------------------------------------- lists used by the forms
 const CHECKS = {
@@ -183,7 +196,7 @@ function recorded(wo) {
     ['Photos', f.photos.length ? `${f.photos.length} attached` : null],
     ['Verification', f.verify ? { full: 'Fully restored', partial: 'Partially restored', no: 'Problem remains' }[f.verify.restored] : null],
   ];
-  return `<ul class="safe-list safe-list--why">${rows.map(([k, v]) => `<li><span class="sys-dot sys-dot--${v ? 'ok' : 'off'}" aria-hidden="true"></span><span><strong>${k}</strong><small>${v ? esc(v) : 'Not yet recorded'}</small></span>${v ? '<em>Saved</em>' : ''}</li>`).join('')}</ul>`;
+  return `<ul class="fx-rec">${rows.map(([k, v]) => `<li class="${v ? 'is-saved' : ''}"><span><strong>${k}</strong><small>${v ? esc(v) : 'Not yet recorded'}</small></span>${v ? '<em>Saved</em>' : ''}</li>`).join('')}</ul>`;
 }
 const side = (wo) => `<div class="inc-side">${card('What has been recorded', recorded(wo), { sub: 'Saved to the work order' })}${card('Timeline', timelineOf(wo), { sub: 'Updates as you work' })}</div>`;
 const layout = (wo, main) => `<div class="inc-grid"><div class="inc-main">${main}</div>${side(wo)}</div>`;
@@ -198,28 +211,69 @@ function kmTo(wo) {
   const a = Math.sin(((la - userPos[0]) * r) / 2) ** 2 + Math.cos(la * r) * Math.cos(userPos[0] * r) * Math.sin(((lo - userPos[1]) * r) / 2) ** 2;
   return 6371 * 2 * Math.asin(Math.sqrt(a));
 }
+const STEP_WORD = (wo) => statusWord(wo)[1];
+const dueText = (wo) => {
+  if (!wo.target) return '';
+  const h = (wo.target - Date.now()) / 3600e3;
+  const span = Math.abs(h) >= 24 ? `${Math.round(Math.abs(h) / 24)} d` : `${Math.max(1, Math.round(Math.abs(h)))} h`;
+  return h < 0 ? `Overdue by ${span}` : `Due in ${span}`;
+};
+const priText = (wo) => `<span class="fxa-pri ${['Critical', 'High'].includes(wo.priority) ? 'is-urgent' : ''}">${esc(wo.priority || 'Medium')} priority</span>`;
+const nextBtn = (wo, cls = 'btn--primary btn--sm') => {
+  const n = nextAction(wo);
+  return n.href ? `<a class="btn ${cls}" href="${n.href}">${n.label}</a>` : `<button class="btn ${cls}" data-action="${n.action}" data-id="${wo.id}">${n.label}</button>`;
+};
+const stepBar = (wo) => {
+  const s = stageOf(wo);
+  return `<div class="fxa-steps" aria-label="Step ${Math.min(s + 1, 5)} of 5">${STAGES.map((_, k) => `<span class="${k < s || wo.status === 'Completed' ? 'is-done' : k === s ? 'is-now' : ''}"></span>`).join('')}</div>`;
+};
+
 function assignmentRow(wo) {
-  const inc = incOf(wo);
   const done = wo.status === 'Completed';
   const km = done ? null : kmTo(wo);
-  const conn = inc?.connections || zoneOfWo(wo)?.connections;
-  const n = nextAction(wo);
-  const meta = (done
-    ? [`${icon('check-circle', 13)} Completed ${fmtDateTime(wo.completion?.at)}`, `${icon('pin', 13)} ${esc(wo.location || zoneOfWo(wo)?.name || '—')}`]
-    : [`${icon('pin', 13)} ${esc(wo.location || zoneOfWo(wo)?.name || '—')}`, `${icon('clock', 13)} Assigned ${relTime(assignedAt(wo))}`, km != null ? `${icon('truck', 13)} ${fmt(km, 1)} km away` : '', conn ? `${icon('users', 13)} ~${fmt(conn)} connections` : '']
-  ).filter(Boolean);
-  const btn = done
-    ? `<a class="btn btn--outline btn--sm" href="#/c/done/${wo.id}">View Summary</a>`
-    : `<a class="btn btn--outline btn--sm" href="#/c/jobs/${wo.id}">View Work Order</a>${n.href ? `<a class="btn btn--primary btn--sm" href="${n.href}">${n.label}</a>` : `<button class="btn btn--primary btn--sm" data-action="${n.action}" data-id="${wo.id}">${n.label}</button>`}`;
+  const late = !done && wo.target && wo.target < Date.now();
+  const meta = [esc(wo.location || zoneOfWo(wo)?.name || 'Location not set'), done ? `Completed ${fmtDateTime(wo.completion?.at)}` : `Assigned ${relTime(assignedAt(wo))}`, km != null ? `${fmt(km, 1)} km away` : ''].filter(Boolean);
   return `<div class="fxa-row">
-    <div class="fxa-main"><div class="fxa-top"><span class="mono">${esc(wo.id)}</span>${priorityBadge(wo.priority || 'Medium')}</div>
+    <div class="fxa-main">
+      <div class="fxa-top"><span class="mono">${esc(wo.id)}</span>${priText(wo)}</div>
       <strong class="fxa-issue">${esc(issueOf(wo))}</strong>
-      <div class="fxa-meta">${meta.map((m) => `<span>${m}</span>`).join('')}</div></div>
-    <div class="fxa-st">${statusBadge(wo)}</div>
-    <div class="fxa-a">${btn}</div>
+      <div class="fxa-meta">${meta.map((m) => `<span>${m}</span>`).join('')}</div>
+    </div>
+    <div class="fxa-st">
+      <div class="fxa-st-t"><strong>${esc(STEP_WORD(wo))}</strong>${done ? '' : `<span class="${late ? 'is-late' : ''}">${dueText(wo)}</span>`}</div>
+      ${stepBar(wo)}
+    </div>
+    <div class="fxa-a">${done ? `<a class="btn btn--outline btn--sm" href="#/c/done/${wo.id}">View summary</a>` : `<a class="btn btn--ghost btn--sm" href="#/c/jobs/${wo.id}">Details</a>${nextBtn(wo)}`}</div>
   </div>`;
 }
-// One page for all of the responder's work: in progress, to do, and completed.
+
+// The job to work on now: one already in progress, otherwise the most urgent one waiting.
+function currentJob(wo, working) {
+  const inc = incOf(wo);
+  const s = stageOf(wo);
+  const late = wo.target && wo.target < Date.now();
+  const km = kmTo(wo);
+  const conn = inc?.connections || zoneOfWo(wo)?.connections;
+  const facts = [
+    ['Location', esc(wo.location || zoneOfWo(wo)?.name || 'Not set')],
+    ['Target', wo.target ? `<span class="${late ? 'is-late' : ''}">${fmtDateTime(wo.target)}</span><small>${dueText(wo)}</small>` : 'Not set'],
+    ['Assigned', `${fmtDateTime(assignedAt(wo))}<small>${relTime(assignedAt(wo))}</small>`],
+    km != null ? ['Distance', `${fmt(km, 1)} km`] : conn ? ['Households served', `About ${fmt(conn)}`] : null,
+  ].filter(Boolean);
+  return `<section class="fxh">
+    <div class="fxh-h">
+      <div><span class="fxh-k">${working ? 'In progress' : 'Next job'}</span><span class="mono fxh-id">${esc(wo.id)}</span>${priText(wo)}</div>
+      <span class="fxh-step">Step ${Math.min(s + 1, 5)} of 5, ${esc(STAGES[Math.min(s, 4)])}</span>
+    </div>
+    <h2 class="fxh-t">${esc(issueOf(wo))}</h2>
+    ${wo.description && wo.description.split('.')[0] !== issueOf(wo) ? `<p class="fxh-d">${esc(wo.description)}</p>` : ''}
+    <ol class="fxh-track">${STAGES.map((t, k) => `<li class="${k < s ? 'is-done' : k === s ? 'is-now' : ''}"><span></span>${esc(t)}</li>`).join('')}</ol>
+    <dl class="fxh-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+    <div class="fxh-f"><p>${esc(nextHint(wo))}</p><div class="fxh-a"><a class="btn btn--outline" href="#/c/jobs/${wo.id}">View work order</a>${nextBtn(wo, 'btn--primary')}</div></div>
+  </section>`;
+}
+
+// One page for all of the responder's work: current job, then in progress, to do, and completed.
 const list = (wos) => `<div class="fxa-list">${wos.map(assignmentRow).join('')}</div>`;
 const assignments = {
   title: 'My Assignments',
@@ -232,24 +286,27 @@ const assignments = {
     const today = new Date().toDateString();
     const doneToday = done.filter((w) => new Date(w.completion?.at || 0).toDateString() === today).length;
     const urgent = open.filter((w) => w.priority === 'Critical' || w.priority === 'High').length;
+    const overdue = open.filter((w) => w.target && w.target < Date.now()).length;
     const who = whoName();
-    return `<div class="page-h"><div><h1>My Assignments</h1><p class="page-sub">${isCrew() ? 'Work orders assigned to you by the water utility.' : `Previewing ${who ? esc(who) : 'all responders'} · <a href="#/c/profile">Change</a>`}</p></div>
-      <div class="page-a">${open.length && !userPos ? `<button class="btn btn--outline btn--sm" data-action="fx-locate">${icon('pin', 14)} Show distances</button>` : ''}</div></div>
-      <div class="kpis kpis--4 rrep-kpis">
-        ${kpi({ label: 'Urgent', value: urgent, sub: dotSub(urgent ? 'critical' : 'normal', 'Critical or high priority'), sev: urgent ? 'critical' : null })}
-        ${kpi({ label: 'In progress', value: working.length, sub: dotSub(working.length ? 'warning' : 'normal', 'En route to testing') })}
-        ${kpi({ label: 'To do', value: todo.length, sub: dotSub('offline', 'Assigned, not started') })}
-        ${kpi({ label: 'Completed today', value: doneToday, sub: dotSub('normal', 'Verified and closed out') })}
-      </div>
-      ${working.length ? card('In progress', list(working), { sub: 'Pick up where you left off', cls: 'card--flush' }) : ''}
+    const cur = working[0] || todo[0];
+    const rest = (wos) => wos.filter((w) => w !== cur);
+    const cell = (k, v, sub, warn) => `<div><dt>${k}</dt><dd class="${warn ? 'is-warn' : ''}">${v}</dd><span>${sub}</span></div>`;
+    return `<div class="page-h"><div><h1>My Assignments</h1><p class="page-sub">${isCrew() ? 'Work orders assigned to you by the water utility.' : `Previewing ${who ? esc(who) : 'all responders'}. <a href="#/c/profile">Change</a>`}</p></div>
+      <div class="page-a">${open.length && !userPos ? `<button class="btn btn--outline btn--sm" data-action="fx-locate">Show distances</button>` : ''}</div></div>
       ${
-        todo.length
-          ? card('To do', list(todo), { sub: 'Most urgent first', cls: 'card--flush' })
-          : open.length
-            ? ''
-            : card('', empty('No assignments right now', 'New work orders from your provider will appear here.', 'clipboard', B.FB_ENABLED ? '' : `<button class="btn btn--outline" data-action="fx-demo">${icon('play', 15)} Load demo assignment</button>`))
+        cur
+          ? currentJob(cur, ACTIVE.includes(cur.status))
+          : card('', empty('No assignments right now', 'New work orders from your provider will appear here.', 'clipboard', B.FB_ENABLED ? '' : `<button class="btn btn--outline" data-action="fx-demo">Load demo assignment</button>`))
       }
-      ${done.length ? card('Completed', list(done), { sub: 'Newest first', cls: 'card--flush' }) : ''}`;
+      <dl class="fxs">
+        ${cell('Open', open.length, `${working.length} in progress, ${todo.length} not started`)}
+        ${cell('Urgent', urgent, 'Critical or high priority', urgent > 0)}
+        ${cell('Overdue', overdue, 'Past the target time', overdue > 0)}
+        ${cell('Completed today', doneToday, `${done.length} completed in total`)}
+      </dl>
+      ${rest(working).length ? card('In progress', list(rest(working)), { sub: 'Pick up where you left off', cls: 'card--flush' }) : ''}
+      ${rest(todo).length ? card('To do', list(rest(todo)), { sub: 'Most urgent first', cls: 'card--flush' }) : ''}
+      ${done.length ? card('Completed', list(done.slice(0, 10)), { sub: done.length > 10 ? 'Latest 10' : 'Newest first', cls: 'card--flush' }) : ''}`;
   },
 };
 
@@ -304,6 +361,24 @@ const woPage = {
 
 // ---------------------------------------------------------------- photos (Inspection, Repair, Verification)
 let errs = {};
+// Drop errors that have been fixed since the last save attempt, so only real problems stay on screen.
+function pruneErrs(wo, d, sec) {
+  const ph = fieldOf(wo).photos;
+  const has = (st) => ph.some((p) => p.stage === st);
+  const ok = {
+    conditions: () => d.conditions?.length,
+    actions: () => d.actions?.length,
+    notes: () => (d.notes || '').trim(),
+    photos: () => !majorRepair(wo, d) || (has('before') && has('after')),
+    photo: () => has('after'),
+    restored: () => d.restored,
+    pressure: () => d.pressure,
+    final: () => FINAL.every((x) => (d.final || []).includes(x)),
+    explain: () => (d.explain || '').trim(),
+    reason: () => (d.reason || '').trim() && (d.next || '').trim(),
+  };
+  Object.keys(errs).forEach((k) => ok[k] && ok[k]() && delete errs[k]);
+}
 function photoBlock(wo, stage, title, hint) {
   const ph = fieldOf(wo).photos.map((p, i) => ({ ...p, i })).filter((p) => p.stage === stage);
   return `<div class="fx-ph">
@@ -312,11 +387,13 @@ function photoBlock(wo, stage, title, hint) {
       .map(
         (p) => `<figure class="fx-ph-i"><img src="${p.src}" alt="${esc(p.caption || title)}"/><figcaption>
           <input value="${esc(p.caption || '')}" placeholder="Add a caption" aria-label="Photo caption" data-change="fx-cap" data-id="${wo.id}" data-i="${p.i}"/>
-          <small>${fmtTime(p.at)} · ${esc(wo.id)}</small>
-          <button type="button" class="btn btn--ghost btn--xs" data-action="fx-ph-rm" data-id="${wo.id}" data-i="${p.i}">${icon('x', 13)} Remove</button></figcaption></figure>`
+          <small>${fmtTime(p.at)}, ${esc(wo.id)}</small>
+          <button type="button" class="btn btn--ghost btn--xs" data-action="fx-ph-rm" data-id="${wo.id}" data-i="${p.i}">Remove</button></figcaption></figure>`
       )
       .join('')}
-      <label class="upload fx-ph-add">${icon('camera', 22)}<span><strong>Add photo</strong><em>JPG or PNG</em></span><input type="file" accept="image/*" capture="environment" class="sr-only" data-change="fx-ph-add" data-id="${wo.id}" data-stage="${stage}"/></label>
+      ${ph.length
+        ? `<label class="btn btn--outline btn--sm fx-ph-more">Add another photo<input type="file" accept="image/*" capture="environment" class="sr-only" data-change="fx-ph-add" data-id="${wo.id}" data-stage="${stage}"/></label>`
+        : uploadBox('a photo', `<input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" data-change="fx-ph-add" data-id="${wo.id}" data-stage="${stage}"/>`)}
     </div></div>`;
 }
 const notStarted = (wo, here, title, msg, ic) => `${woHead(wo, here, title)}${layout(wo, card('', empty(`${title} has not started`, msg, ic, actionBtn(wo))))}`;
@@ -331,9 +408,10 @@ const inspectPage = {
     if (!wo) return empty('Work order not found', '', 'search');
     if (stageOf(wo) < 2) return notStarted(wo, 2, 'Field Inspection', 'Start the response and record your arrival first.', 'clipboard');
     const d = draft(id, 'insp', inspInit(wo));
+    pruneErrs(wo, d, 'insp');
     const locked = stageOf(wo) > 2;
     const main = `
-      ${locked ? alertBanner('info', 'Inspection already saved', 'You can review it here. Changes on this screen are kept on this device only.') : ''}
+      ${locked ? notice('Inspection', 'Already saved', 'You can review it here. Changes on this screen are kept on this device only.') : ''}
       ${card(
         'Inspection checklist',
         `<ul class="fx-check">${CHECKS[kindOf(wo)]
@@ -365,7 +443,7 @@ const inspectPage = {
           ? ''
           : card(
               'Does this issue require repair?',
-              `<div class="form-a fx-decide"><button class="btn btn--outline" data-action="fx-insp-save" data-id="${id}" data-repair="0">No — Continue Investigation</button><button class="btn btn--primary btn--lg" data-action="fx-insp-save" data-id="${id}" data-repair="1">${icon('wrench', 16)} Yes — Proceed to Repair</button></div>`,
+              `<div class="form-a fx-decide"><button class="btn btn--outline" data-action="fx-insp-save" data-id="${id}" data-repair="0">No, continue investigation</button><button class="btn btn--primary" data-action="fx-insp-save" data-id="${id}" data-repair="1">Yes, proceed to repair</button></div>`,
               { sub: "Saving sends the inspection to your provider's work order and incident timeline" }
             )
       }`;
@@ -388,6 +466,7 @@ const repairPage = {
     const z = zoneOfWo(wo);
     const locked = stageOf(wo) > 3;
     const major = majorRepair(wo, d);
+    pruneErrs(wo, d, 'rep');
     const main = `
       ${card(
         'Problem confirmed',
@@ -412,7 +491,7 @@ const repairPage = {
       ${card(
         'Photo evidence',
         `<div class="fx-ph-grid">${photoBlock(wo, 'before', 'Before repair')}${photoBlock(wo, 'during', 'During repair')}${photoBlock(wo, 'after', 'After repair')}</div>
-        <p class="fine">${major ? '<strong>Major repair:</strong> add at least one before and one after photo.' : 'Before and after photos help your provider confirm the repair.'} Location is not required.</p>${errBox(errs.photos)}`,
+        ${errs.photos ? errBox(errs.photos) : `<p class="fine">${major ? 'Major repair: at least one before and one after photo is required.' : 'Before and after photos help your provider confirm the repair.'}</p>`}`,
         { sub: 'Each photo keeps its time and work order number' }
       )}
       ${card(
@@ -421,8 +500,11 @@ const repairPage = {
         <p class="fine">Goes to the work order and incident timeline. Residents do not see it; your provider decides what to tell the public.</p>`,
         { sub: 'A short progress note for your provider', actions: `<button type="button" class="btn btn--outline btn--sm" data-action="fx-update" data-id="${id}">${icon('megaphone', 14)} Send update</button>` }
       )}
-      ${alertBanner('warning', "Can't finish the repair?", 'Ask your provider for more crew, equipment, parts or a technician. The work order stays open.', `<button type="button" class="btn btn--sm btn--outline" data-action="fx-assist" data-id="${id}">${icon('alert', 14)} Request Assistance</button>`)}
-      ${locked ? '' : `<div class="form-a"><button type="button" class="btn btn--ghost" data-action="fx-rep-save" data-id="${id}">Save progress</button><button type="button" class="btn btn--primary btn--lg" data-action="fx-verify-start" data-id="${id}">${icon('gauge', 16)} Begin Verification</button></div>`}`;
+      <section class="fx-help">
+        <div><h3>Need help to finish?</h3><p>Ask your provider for more crew, equipment, parts or a technician. The work order stays open while you wait.</p>${fieldOf(wo).assistance?.length ? `<p class="fx-help-n">${fieldOf(wo).assistance.length} request${fieldOf(wo).assistance.length > 1 ? 's' : ''} sent, last ${relTime(fieldOf(wo).assistance.at(-1).at)}</p>` : ''}</div>
+        <button type="button" class="btn btn--outline btn--sm" data-action="fx-assist" data-id="${id}">Request assistance</button>
+      </section>
+      ${locked ? '' : `<div class="form-a fx-pair"><button type="button" class="btn btn--outline" data-action="fx-rep-save" data-id="${id}">Save progress</button><button type="button" class="btn btn--primary" data-action="fx-verify-start" data-id="${id}">Begin verification</button></div>`}`;
     return `${woHead(wo, 3, 'Repair & Evidence')}${layout(wo, main)}`;
   },
 };
@@ -439,6 +521,11 @@ function compareRows(wo, d) {
     ${row('Leak', leakBefore, d.leak)}
   </div>`;
 }
+// Plain status card used on the workflow screens (no icon, no coloured stripe).
+const notice = (k, title, text, aside = '', tone = '') => `<section class="fx-note ${tone ? `fx-note--${tone}` : ''}"><div><span class="fx-note-k">${esc(k)}</span><strong>${esc(title)}</strong><p>${esc(text)}</p></div>${aside ? `<div class="fx-note-a">${aside}</div>` : ''}</section>`;
+function verifyChecks(wo, d) {
+  return [!!d.restored, !!d.pressure, !!(d.notes || '').trim(), fieldOf(wo).photos.some((p) => p.stage === 'after'), FINAL.every((x) => d.final.includes(x))];
+}
 function verdict(wo, d) {
   const ok = d.restored === 'full' && FINAL.every((x) => d.final.includes(x)) && d.pressure && d.notes.trim() && fieldOf(wo).photos.some((p) => p.stage === 'after');
   return ok ? ['normal', 'Service restored', 'Ready to complete the work order.'] : d.restored && d.restored !== 'full' ? ['critical', 'Further action required', 'Send the result to your provider for follow-up.'] : ['info', 'Not verified yet', 'Complete the measurements, restoration check and final checklist.'];
@@ -451,6 +538,7 @@ const verifyPage = {
     if (!wo) return empty('Work order not found', '', 'search');
     if (stageOf(wo) < 4) return notStarted(wo, 4, 'Verification', 'Finish the repair and choose "Begin Verification" first.', 'gauge');
     const d = draft(id, 'ver', verInit(wo));
+    pruneErrs(wo, d, 'ver');
     const done = wo.status === 'Completed';
     const [vs, vw, vt] = verdict(wo, d);
     const opt = (val, title, sub) => `<label class="fx-opt ${d.restored === val ? 'is-on' : ''}"><input type="radio" name="restored" value="${val}" ${d.restored === val ? 'checked' : ''} data-change="fx-in" data-sec="ver" data-k="restored"/><strong>${title}</strong><small>${sub}</small></label>`;
@@ -483,14 +571,19 @@ const verifyPage = {
         `<ul class="fx-final">${FINAL.map((x) => `<li><label class="chk"><input type="checkbox" ${d.final.includes(x) ? 'checked' : ''} data-change="fx-multi" data-sec="ver" data-k="final" value="${esc(x)}"/> ${esc(x)}</label></li>`).join('')}</ul>${errBox(errs.final)}`,
         { sub: 'All items are required to complete the work order' }
       )}
-      ${alertBanner(vs, `Verification result: ${vw}`, vt)}
+      ${(() => {
+        const c = verifyChecks(wo, d);
+        const n = c.filter(Boolean).length;
+        const aside = vs === 'info' ? `<strong>${n} of ${c.length}</strong><span>checks done</span>` : '';
+        return notice('Verification result', vw, vt, aside, vs === 'normal' ? 'ok' : vs === 'critical' ? 'act' : '');
+      })()}
       ${
         done
           ? ''
-          : `<div class="form-a"><button type="button" class="btn btn--ghost" data-action="fx-back-repair" data-id="${id}">${icon('chev-l', 15)} Back to Repair</button>${
+          : `<div class="form-a fx-pair"><button type="button" class="btn btn--outline" data-action="fx-back-repair" data-id="${id}">Back to repair</button>${
               d.restored && d.restored !== 'full'
-                ? `<button type="button" class="btn btn--danger btn--lg" data-action="fx-ver-save" data-id="${id}">${icon('alert', 16)} Send to Provider</button>`
-                : `<button type="button" class="btn btn--primary btn--lg" data-action="fx-ver-save" data-id="${id}">${icon('check-circle', 16)} Review & Complete</button>`
+                ? `<button type="button" class="btn btn--danger" data-action="fx-ver-save" data-id="${id}">Send to provider</button>`
+                : `<button type="button" class="btn btn--primary" data-action="fx-ver-save" data-id="${id}">Review and complete</button>`
             }</div>`
       }`;
     return `${woHead(wo, 4, 'Verification')}${layout(wo, main)}`;
@@ -524,9 +617,9 @@ const donePage = {
       ['Responder', wo.team || RESPONDER_USER.name],
     ];
     const main = `
-      ${done ? alertBanner('normal', 'Work order complete', 'Your provider has the verified field result. They will decide when the incident is fully resolved.') : alertBanner('info', 'Ready to complete', 'Check the summary, then complete the work order. The incident stays open until your provider resolves it.')}
+      ${done ? notice('Work order', 'Complete', 'Your provider has the verified field result. They will decide when the incident is fully resolved.', '', 'ok') : notice('Work order', 'Ready to complete', 'Check the summary, then complete the work order. The incident stays open until your provider resolves it.')}
       ${card('Summary', `<dl class="kv kv--3">${rows.map(([k, val]) => `<div><dt>${k}</dt><dd>${esc(val)}</dd></div>`).join('')}</dl>`, { sub: 'Sent to your provider with the work order' })}
-      ${done ? `<div class="form-a"><a class="btn btn--primary btn--lg" href="#/c/jobs">Back to My Assignments</a></div>` : `<div class="form-a"><a class="btn btn--ghost" href="#/c/verify/${wo.id}">Edit verification</a><button type="button" class="btn btn--success btn--lg" data-action="fx-complete" data-id="${wo.id}">${icon('check-circle', 16)} Complete Work Order</button></div>`}`;
+      ${done ? `<div class="form-a fx-pair"><a class="btn btn--primary" href="#/c/jobs">Back to My Assignments</a></div>` : `<div class="form-a fx-pair"><a class="btn btn--outline" href="#/c/verify/${wo.id}">Edit verification</a><button type="button" class="btn btn--primary" data-action="fx-complete" data-id="${wo.id}">Complete work order</button></div>`}`;
     return `${woHead(wo, 4, done ? 'Work Order Complete' : 'Ready to Complete')}${layout(wo, main)}`;
   },
 };
@@ -631,9 +724,10 @@ registerInputs({
     const f = el.files?.[0];
     if (!f) return;
     try {
-      S.fieldAddPhoto(el.dataset.id, { stage: el.dataset.stage, src: await readImage(f, 480), caption: '' });
+      await S.fieldAddPhoto(el.dataset.id, { stage: el.dataset.stage, src: S.isRemote() ? await readImage(f, 1280, 0.82) : await readImage(f, 480), caption: '' });
     } catch (e) {
-      S.toast('Could not read that photo', 'error');
+      console.error(e);
+      S.toast(e?.code ? `Could not upload the photo (${e.code})` : 'Could not read that photo', 'error');
     }
   },
   'fx-view': (el) => {

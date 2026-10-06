@@ -99,8 +99,8 @@ export function centroid(polyStr) {
   return [Math.round(p.reduce((a, q) => a + q[0], 0) / p.length), Math.round(p.reduce((a, q) => a + q[1], 0) / p.length)];
 }
 
-// Downscale an uploaded image to keep localStorage small.
-export function readImage(file, max = 640) {
+// Downscale an uploaded image (small for the offline demo's localStorage, larger for Firebase Storage).
+export function readImage(file, max = 640, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -111,7 +111,7 @@ export function readImage(file, max = 640) {
         c.width = Math.round(img.width * scale);
         c.height = Math.round(img.height * scale);
         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL('image/jpeg', 0.72));
+        resolve(c.toDataURL('image/jpeg', quality));
       };
       img.onerror = reject;
       img.src = reader.result;

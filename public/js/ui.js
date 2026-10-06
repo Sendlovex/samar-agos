@@ -4,6 +4,7 @@ import { esc, relTime, fmtDateTime } from './util.js';
 
 // ---------------------------------------------------------------- icons (Lucide-style, stroke)
 const P = {
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>',
   droplet: '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
   'droplet-off': '<path d="M18.7 13.3a7 7 0 0 0-1.7-3.8L12 2 9.7 5.4"/><path d="M6.6 8.6A7 7 0 0 0 12 22a7 7 0 0 0 5.4-2.5"/><path d="m2 2 20 20"/>',
   droplets: '<path d="M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z"/><path d="M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97"/>',
@@ -356,11 +357,14 @@ export function showToast({ msg, kind = 'success' }) {
   const root = document.getElementById('toast-root');
   const el = document.createElement('div');
   el.className = `toast toast--${kind}`;
-  el.setAttribute('role', 'status');
-  el.innerHTML = `${icon(kind === 'success' ? 'check-circle' : kind === 'error' ? 'octagon' : 'info', 18)}<span>${esc(msg)}</span>`;
+  el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  const label = { success: 'Success', error: 'Error', info: 'Information', warning: 'Warning' }[kind] || 'Notice';
+  el.innerHTML = `<div class="toast-b"><strong>${label}</strong><span>${esc(msg)}</span></div><button type="button" class="toast-x">Dismiss</button>`;
+  const close = () => (el.classList.add('is-out'), setTimeout(() => el.remove(), 300));
+  el.querySelector('.toast-x').addEventListener('click', close);
   root.appendChild(el);
-  setTimeout(() => el.classList.add('is-out'), 3600);
-  setTimeout(() => el.remove(), 4000);
+  // errors stay longer so they can be read
+  setTimeout(close, kind === 'error' ? 8000 : 4000);
 }
 
 // Run an async action with its button disabled (prevents double submits), surfacing failures.
@@ -444,6 +448,78 @@ export function formData(root) {
   });
   return o;
 }
+
+// Philippine mobile number: "+63" is shown as a fixed prefix, so only the 10 digits are typed (9xx xxx xxxx).
+const phDigits = (v) => {
+  let d = String(v || '').replace(/\D/g, '');
+  if (d.startsWith('63')) d = d.slice(2);
+  else if (d.startsWith('0')) d = d.slice(1);
+  return d.slice(0, 10);
+};
+const phFormat = (d) => [d.slice(0, 3), d.slice(3, 6), d.slice(6, 10)].filter(Boolean).join(' ');
+export function phoneInput(id, value = '') {
+  return `<div class="ph-in"><span class="ph-cc" aria-hidden="true">+63</span><input id="${id}" type="tel" inputmode="numeric" autocomplete="tel-national" maxlength="12" placeholder="9xx xxx xxxx" aria-label="Mobile number, 10 digits after +63" value="${phFormat(phDigits(value))}" data-input="ph-fmt"/></div>`;
+}
+// Stored as "+63 9xx xxx xxxx"; empty when nothing was typed. Returns null if the number is incomplete.
+export function phoneValue(id) {
+  const d = phDigits(document.getElementById(id)?.value);
+  if (!d) return '';
+  return d.length === 10 && d[0] === '9' ? `+63 ${phFormat(d)}` : null;
+}
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (el?.dataset?.input !== 'ph-fmt') return;
+  const d = phDigits(el.value);
+  el.value = phFormat(d);
+});
+
+// Shared image upload box: click or drag a file onto it. `input` is the <input type="file"> markup.
+export const UPLOAD_MAX_MB = 10;
+export function uploadBox(what, input, { hint = `JPEG, PNG or WEBP (max ${UPLOAD_MAX_MB} MB)`, sm = false } = {}) {
+  return `<label class="upload ${sm ? 'upload--sm' : ''}"><span class="upload-ic" aria-hidden="true">${icon('image', 18)}</span><strong>Click to upload or drag ${esc(what)}</strong><em>${esc(hint)}</em>${input}</label>`;
+}
+// Drag and drop onto any upload box; the file goes through the input's normal change handler.
+['dragenter', 'dragover'].forEach((t) =>
+  document.addEventListener(t, (e) => {
+    const box = e.target.closest?.('.upload');
+    if (!box) return;
+    e.preventDefault();
+    box.classList.add('is-drag');
+  })
+);
+document.addEventListener('dragleave', (e) => {
+  const box = e.target.closest?.('.upload');
+  if (box && !box.contains(e.relatedTarget)) box.classList.remove('is-drag');
+});
+document.addEventListener('drop', (e) => {
+  const box = e.target.closest?.('.upload');
+  if (!box) return;
+  e.preventDefault();
+  box.classList.remove('is-drag');
+  const input = box.querySelector('input[type=file]');
+  const file = e.dataTransfer?.files?.[0];
+  if (!input || !file) return;
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+});
+// Reject files that are not images or are too large before any screen handles them.
+document.addEventListener(
+  'change',
+  (e) => {
+    const el = e.target;
+    if (el?.type !== 'file' || !el.closest?.('.upload')) return;
+    const f = el.files?.[0];
+    if (!f) return;
+    const bad = !/^image\/(jpeg|png|webp)$/.test(f.type) ? 'Choose a JPEG, PNG or WEBP image.' : f.size > UPLOAD_MAX_MB * 1048576 ? `That image is larger than ${UPLOAD_MAX_MB} MB. Choose a smaller one.` : '';
+    if (!bad) return;
+    e.stopImmediatePropagation();
+    el.value = '';
+    showToast({ msg: bad, kind: 'error' });
+  },
+  true
+);
 
 export function field(label, control, { hint = '', id = '', req = false, optional = false } = {}) {
   return `<div class="field"><label class="field-l" ${id ? `for="${id}"` : ''}>${esc(label)}${req ? ' <span class="req" aria-hidden="true">*</span>' : ''}${optional ? ' <span class="opt">(optional)</span>' : ''}</label>${control}${hint ? `<div class="field-h">${hint}</div>` : ''}</div>`;

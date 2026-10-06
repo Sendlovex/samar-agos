@@ -54,6 +54,13 @@ export function incidentTable(list, emptyMsg = 'No active incidents') {
 }
 
 // ---------------------------------------------------------------- work order modal
+// Barangay picker grouped by service zone; a location typed elsewhere (e.g. from a report) is kept as an option.
+function locationSelect(current, zoneId) {
+  const pick = current || zoneById(zoneId)?.name || '';
+  const known = ZONES.some((z) => z.name === pick);
+  const groups = SERVICE_ZONES.map((g) => `<optgroup label="${esc(`${g.name}, ${g.area}`)}">${ZONES.filter((z) => z.group === g.id).map((z) => `<option value="${esc(z.name)}" ${z.name === pick ? 'selected' : ''}>${esc(z.short)}</option>`).join('')}</optgroup>`).join('');
+  return `<select name="location" id="wo-loc" required data-change="wo-loc-pick"><option value="" ${pick ? '' : 'selected'} disabled>Select a barangay</option>${pick && !known ? `<option value="${esc(pick)}" selected>${esc(pick)}</option>` : ''}${groups}</select>`;
+}
 export function openWorkOrderModal(prefill = {}) {
   const s = st();
   const inc = prefill.incidentId && s.incidents.find((i) => i.id === prefill.incidentId);
@@ -61,14 +68,14 @@ export function openWorkOrderModal(prefill = {}) {
   const assets = s.assets.filter((a) => !zone || a.zone === zone || a.id === prefill.assetId);
   const defAsset = prefill.assetId || assets[0]?.id || 'PL-NET';
   const target = toLocalInput(Date.now() + (prefill.priority === 'Critical' ? 3 : 6) * 3600000);
-  const desc = prefill.description || (inc ? `Inspect and repair cause of ${inc.title.toLowerCase()}. Confirm pressure and flow recovery after repair.` : '');
+  const desc = prefill.description || (inc ? `Inspect and repair the cause of the ${inc.title.split('—')[0].trim().toLowerCase()} in ${zoneById(inc.zone).short}. Confirm pressure and flow have recovered after the repair.` : '');
   openModal(
     'Create Work Order',
     `<form class="form" id="wo-form">
-      ${inc ? `<div class="link-box">${icon('link', 15)} Linked to <strong>${inc.id}</strong> — ${esc(inc.title)}</div>` : ''}
+      ${inc ? `<div class="wo-link"><span>Linked incident</span><strong>${inc.id}</strong><em>${esc(inc.title)}</em></div>` : ''}
       <div class="grid-2">
-        ${field('Asset', `<select name="assetId" id="wo-asset">${s.assets.map((a) => `<option value="${a.id}" ${a.id === defAsset ? 'selected' : ''}>${a.id} — ${esc(a.name)}</option>`).join('')}</select>`, { id: 'wo-asset', req: true })}
-        ${field('Location', `<input name="location" id="wo-loc" value="${esc(prefill.location || (inc ? `${zoneById(inc.zone).name} — ${zoneById(inc.zone).barangays.join(', ')}` : ''))}" required/>`, { id: 'wo-loc', req: true })}
+        ${field('Asset', `<select name="assetId" id="wo-asset" data-change="wo-asset-loc">${s.assets.map((a) => `<option value="${a.id}" ${a.id === defAsset ? 'selected' : ''}>${a.id} — ${esc(a.name)}</option>`).join('')}</select>`, { id: 'wo-asset', req: true })}
+        ${field('Location', locationSelect(prefill.location, inc?.zone || s.assets.find((a) => a.id === defAsset)?.zone), { id: 'wo-loc', req: true })}
         ${field('Priority', `<select name="priority" id="wo-pri">${['Critical', 'High', 'Medium', 'Low'].map((p) => `<option ${p === (prefill.priority || (inc?.severity === 'High' ? 'High' : 'Medium')) ? 'selected' : ''}>${p}</option>`).join('')}</select>`, { id: 'wo-pri', req: true })}
         ${field('Assign to', `<select name="responder" id="wo-resp"><option value="">Not assigned yet</option>${S.responders().map((r) => `<option value="${esc(r.loginEmail)}">${esc(r.name)}</option>`).join('')}</select>`, { id: 'wo-resp', optional: true, hint: S.responders().length ? 'The responder sees this job on their dashboard.' : 'Add responders under Work Orders first.' })}
         ${field('Target completion', `<input type="datetime-local" name="target" id="wo-target" value="${target}"/>`, { id: 'wo-target', req: true })}
@@ -187,6 +194,15 @@ register({
   'adv-clear': () => ((advDraft.areas = []), refreshAreas()),
 });
 
+// Picking an asset fills in its barangay until a location has been chosen by hand.
+registerInputs({
+  'wo-asset-loc': (el) => {
+    const loc = document.getElementById('wo-loc');
+    const z = zoneById(st().assets.find((a) => a.id === el.value)?.zone);
+    if (loc && z && (!loc.value || loc.dataset.auto !== '0')) loc.value = z.name;
+  },
+  'wo-loc-pick': (el) => (el.dataset.auto = '0'),
+});
 registerInputs({
   'adv-f': (el) => {
     const k = el.dataset.k;
@@ -310,7 +326,7 @@ register({
   'wo-create': (el) => busy(el, async () => {
     const f = document.getElementById('wo-form');
     const d = formData(f);
-    if (!d.description.trim() || !d.location.trim()) return S.toast('Location and description are required', 'error');
+    if (!(d.description || '').trim() || !(d.location || '').trim()) return S.toast('Choose a location and add a description', 'error');
     const r = S.responders().find((x) => x.loginEmail === d.responder);
     const wo = await S.createWorkOrder({ incidentId: el.dataset.inc || null, assetId: d.assetId, location: d.location, priority: d.priority, team: r ? r.name : '', responder: r ? r.loginEmail : null, description: d.description, target: fromLocalInput(d.target) || Date.now() + 6 * 3600000 });
     closeOverlay();

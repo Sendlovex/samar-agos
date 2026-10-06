@@ -9,7 +9,7 @@
  * Setup (once): see scripts/advisory-email/README.md
  *   Script properties:
  *     SERVICE_ACCOUNT_JSON  full JSON key of a Firebase service account (required)
- *     APP_URL               link to the SAMAR-AGOS app shown in the email (optional)
+ *     APP_URL               link to the SAMAR-AGOS app shown in the email (optional; defaults to the live site)
  *     SENDER_NAME           display name of the sender (optional)
  *     REPLY_TO              reply-to address (optional)
  *   Then run setup() from the editor.
@@ -20,6 +20,8 @@ const UTILITY_NAME = 'Catbalogan Water District';
 const TIME_ZONE = 'Asia/Manila';
 const CHECK_EVERY_MINUTES = 5;
 const MAX_AGE_HOURS = 24; // never email about changes older than this (e.g. after downtime)
+const DEFAULT_APP_URL = 'https://samar-agos-ic9sb.web.app'; // live SAMAR-AGOS site (Firebase Hosting); APP_URL property overrides it
+const SCRIPT_VERSION = '2026-10-07c'; // shown by the web app, to confirm the latest code is deployed
 
 // ---------------------------------------------------------------- entry points
 
@@ -33,55 +35,78 @@ function setup() {
     .filter((t) => t.getHandlerFunction() === 'checkAdvisories')
     .forEach((t) => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('checkAdvisories').timeBased().everyMinutes(CHECK_EVERY_MINUTES).create();
-  Logger.log('Setup complete. %s existing advisories marked as sent. Checking every %s minutes.', advisories.length, CHECK_EVERY_MINUTES);
+  Logger.log('Setup complete. %s existing advisories marked as sent. Checking every %s minutes. Emails left today: %s', advisories.length, CHECK_EVERY_MINUTES, MailApp.getRemainingDailyQuota());
 }
 
-/** Timer handler: emails residents about new, updated and resolved advisories. */
+/** Timer handler: emails residents about advisories and new responders their credentials. */
 function checkAdvisories() {
+  return runChecks_();
+}
+
+/**
+ * One run: responder credentials first (each is independent), then advisories.
+ * Returns a summary without email addresses or passwords, so the web app can show it.
+ */
+function runChecks_() {
+  const report = { ok: true, version: SCRIPT_VERSION, at: fmt_(Date.now()), quotaLeft: MailApp.getRemainingDailyQuota(), responders: null, advisories: null };
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) return;
+  if (!lock.tryLock(30000)) return Object.assign(report, { ok: false, error: 'Another check is running; try again in a minute.' });
   try {
-    const state = loadState_();
-    const advisories = fetchAdvisories_();
-    const cutoff = Date.now() - MAX_AGE_HOURS * 3600000;
-    let staff = null;
-
-    advisories.forEach((a) => {
-      const seen = state[a.id];
-      const changedAt = a.updatedAt || 0;
-      let kind = null;
-      if (!seen) kind = a.status === 'Resolved' ? null : 'new';
-      else if (a.status === 'Resolved' && seen.status !== 'Resolved') kind = 'resolved';
-      else if (a.status !== 'Resolved' && changedAt > seen.updatedAt) kind = 'update';
-
-      if (kind && changedAt >= cutoff) {
-        if (!staff) staff = fetchStaffEmails_();
-        const recipients = fetchResidents_(a.barangays || [], staff);
-        const sent = sendAdvisory_(a, kind, recipients);
-        Logger.log('%s %s: emailed %s of %s residents', a.id, kind, sent, recipients.length);
-        if (sent < recipients.length) return; // quota reached; retry the rest next run
-      }
-      state[a.id] = { updatedAt: changedAt, status: a.status };
-    });
-    saveState_(state);
     try {
-      checkResponderInvites_();
+      report.responders = checkResponderInvites_();
     } catch (e) {
+      report.ok = false;
+      report.responders = { error: e.message };
       Logger.log('Responder credentials: %s', e.message);
+    }
+    try {
+      report.advisories = checkAdvisoryEmails_();
+    } catch (e) {
+      report.ok = false;
+      report.advisories = { error: e.message };
+      Logger.log('Advisories: %s', e.message);
     }
   } finally {
     lock.releaseLock();
   }
+  return report;
+}
+
+function checkAdvisoryEmails_() {
+  const state = loadState_();
+  const advisories = fetchAdvisories_();
+  const cutoff = Date.now() - MAX_AGE_HOURS * 3600000;
+  const out = { total: advisories.length, sent: [], skipped: [] };
+  let staff = null;
+  advisories.forEach((a) => {
+    const seen = state[a.id];
+    const changedAt = a.updatedAt || 0;
+    let kind = null;
+    if (!seen) kind = a.status === 'Resolved' ? null : 'new';
+    else if (a.status === 'Resolved' && seen.status !== 'Resolved') kind = 'resolved';
+    else if (a.status !== 'Resolved' && changedAt > seen.updatedAt) kind = 'update';
+    if (kind && changedAt < cutoff) out.skipped.push(`${a.id}: last change older than ${MAX_AGE_HOURS} hours`);
+    if (kind && changedAt >= cutoff) {
+      if (!staff) staff = fetchStaffEmails_();
+      const recipients = fetchResidents_(a.barangays || [], staff);
+      const sent = sendAdvisory_(a, kind, recipients);
+      Logger.log('%s %s: emailed %s of %s residents', a.id, kind, sent, recipients.length);
+      out.sent.push({ id: a.id, kind, emailed: sent, residents: recipients.length, barangays: (a.barangays || []).length });
+      if (sent < recipients.length) return; // quota reached; retry the rest next run
+    }
+    state[a.id] = { updatedAt: changedAt, status: a.status };
+  });
+  saveState_(state);
+  return out;
 }
 
 /**
- * Web app endpoint. SAMAR-AGOS opens this URL right after staff publish, update or resolve an
- * advisory so residents are emailed immediately. It only runs the same check as the timer, so
- * calling it without a real change sends nothing.
+ * Web app endpoint. SAMAR-AGOS opens this URL right after staff publish an advisory or add a
+ * responder, so emails go out immediately. It runs the same check as the timer and returns a
+ * short summary (counts only), so calling it without a real change sends nothing.
  */
 function doGet() {
-  checkAdvisories();
-  return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
+  return ContentService.createTextOutput(JSON.stringify(runChecks_())).setMimeType(ContentService.MimeType.JSON);
 }
 function doPost() {
   return doGet();
@@ -174,7 +199,7 @@ function buildEmail_(a, kind, r) {
   const status = titleCase_(a.serviceStatus || (kind === 'resolved' ? 'Normal' : 'Service advisory'));
   const heading = { new: 'Service Advisory', update: 'Service Advisory Update', resolved: 'Service Restored' }[kind];
   const subject = kind === 'resolved' ? `Service restored: ${a.title}` : kind === 'update' ? `Advisory update: ${a.title}` : `Water service advisory: ${a.title}`;
-  const appUrl = PropertiesService.getScriptProperties().getProperty('APP_URL');
+  const appUrl = (PropertiesService.getScriptProperties().getProperty('APP_URL') || DEFAULT_APP_URL);
   const areas = (a.barangays || []).join(', ') || 'Selected barangays';
   const intro =
     kind === 'resolved'
@@ -274,27 +299,37 @@ function buildEmail_(a, kind, r) {
 
 /** Emails each new responder their sign-in details, then deletes the temporary password. */
 function checkResponderInvites_() {
+  const out = { total: 0, sent: 0, waiting: 0, errors: [] };
   listCollection_('responders').forEach((doc) => {
     const r = fromDoc_(doc);
-    if (r.credSent || !r.tempPassword || !r.contactEmail) return;
-    if (MailApp.getRemainingDailyQuota() < 1) return;
+    out.total++;
+    if (r.credSent) return;
+    if (!r.tempPassword || !r.contactEmail) return out.errors.push(`${r.name || 'responder'}: no password or contact email on record`);
+    if (MailApp.getRemainingDailyQuota() < 1) return out.waiting++;
     const id = doc.name.split('/').pop();
-    const mail = buildCredentialsEmail_(r);
-    const opts = { to: r.contactEmail, subject: mail.subject, htmlBody: mail.html, body: mail.text, name: senderName_() };
-    const replyTo = PropertiesService.getScriptProperties().getProperty('REPLY_TO');
-    if (replyTo) opts.replyTo = replyTo;
-    MailApp.sendEmail(opts);
-    // tempPassword is in the update mask but not in the fields, so Firestore deletes it
-    firestore_('patch', `/responders/${id}?updateMask.fieldPaths=credSent&updateMask.fieldPaths=sentAt&updateMask.fieldPaths=tempPassword`, {
-      fields: { credSent: { booleanValue: true }, sentAt: { integerValue: String(Date.now()) } },
-    });
-    Logger.log('Credentials for %s sent to %s', r.loginEmail, r.contactEmail);
+    try {
+      const mail = buildCredentialsEmail_(r);
+      const opts = { to: r.contactEmail, subject: mail.subject, htmlBody: mail.html, body: mail.text, name: senderName_() };
+      const replyTo = PropertiesService.getScriptProperties().getProperty('REPLY_TO');
+      if (replyTo) opts.replyTo = replyTo;
+      MailApp.sendEmail(opts);
+      // tempPassword is in the update mask but not in the fields, so Firestore deletes it
+      firestore_('patch', `/responders/${id}?updateMask.fieldPaths=credSent&updateMask.fieldPaths=sentAt&updateMask.fieldPaths=tempPassword`, {
+        fields: { credSent: { booleanValue: true }, sentAt: { integerValue: String(Date.now()) } },
+      });
+      out.sent++;
+      Logger.log('Credentials for %s sent to %s', r.loginEmail, r.contactEmail);
+    } catch (e) {
+      out.errors.push(`${r.name || 'responder'}: ${e.message}`);
+      Logger.log('Could not send credentials for %s: %s', r.loginEmail, e.message);
+    }
   });
+  return out;
 }
 
 function buildCredentialsEmail_(r) {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-  const appUrl = PropertiesService.getScriptProperties().getProperty('APP_URL');
+  const appUrl = (PropertiesService.getScriptProperties().getProperty('APP_URL') || DEFAULT_APP_URL);
   const font = 'font-family:Arial,Helvetica,sans-serif;';
   const subject = 'Your SAMAR-AGOS responder account';
   const rows = [

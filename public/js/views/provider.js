@@ -347,16 +347,29 @@ const advisories = {
       const v = Math.abs(h) >= 24 ? `${Math.round(Math.abs(h) / 24)}d` : Math.abs(h) >= 1 ? `${Math.round(Math.abs(h))}h` : `${Math.max(1, Math.round(Math.abs(h) * 60))}m`;
       return h < 0 ? `${v} late` : `in ${v}`;
     };
-    const kindDot = (a) => `<span class="sys-dot sys-dot--${a.kind === 'Water Quality' ? 'info' : 'warn'}" aria-hidden="true"></span>`;
+    // Affected areas in map order; a fully covered service zone is named once instead of listing every barangay.
+    const areaList = (areas) => {
+      const set = new Set(areas);
+      const parts = [];
+      SERVICE_ZONES.forEach((g) => {
+        const hit = g.barangays.filter((b) => set.has(b));
+        if (hit.length === g.barangays.length && hit.length > 2) parts.push(`${g.name}, ${g.area} (all ${hit.length} barangays)`);
+        else hit.forEach((b) => parts.push(zoneById(b).short));
+        hit.forEach((b) => set.delete(b));
+      });
+      ZONES.filter((z) => set.has(z.id)).forEach((z) => parts.push(z.short));
+      return parts.join(', ');
+    };
     const advCard = (a) => {
       const late = a.nextUpdate && a.nextUpdate < now;
       return `<article class="padv">
-        <div class="padv-h"><span class="padv-kind">${kindDot(a)}${esc(a.serviceStatus)}</span><span class="mono padv-id">${a.id}</span>${a.incidentId ? `<a class="mono padv-id" href="#/p/incidents/${a.incidentId}">${a.incidentId}</a>` : ''}
-          <span class="padv-due ${late ? 'is-late' : ''}">${a.nextUpdate ? `${late ? icon('alert', 12) : icon('clock', 12)} Next update ${inH(a.nextUpdate)}` : ''}</span></div>
+        <div class="padv-h"><span class="padv-kind">${esc(a.serviceStatus)}</span><span class="mono padv-id">${a.id}</span>${a.incidentId ? `<a class="mono padv-id" href="#/p/incidents/${a.incidentId}">${a.incidentId}</a>` : ''}
+          <span class="padv-due ${late ? 'is-late' : ''}">${a.nextUpdate ? `Next update ${inH(a.nextUpdate)}` : ''}</span></div>
         <h3>${esc(a.title)}</h3><p>${esc(a.message)}</p>
         <div class="padv-f">
-          <dl class="padv-meta"><div><dt>Areas</dt><dd>${a.areas.map((z) => zoneById(z).short).join(', ')}</dd></div><div><dt>Started</dt><dd>${fmtDateTime(a.startAt)}</dd></div><div><dt>Last update</dt><dd>${relTime(a.updatedAt)}</dd></div><div><dt>Est. restoration</dt><dd>${a.etr ? fmtDateTime(a.etr) : '<span class="muted">Not set</span>'}</dd></div></dl>
-          <div class="padv-a"><button class="btn btn--ghost btn--xs" data-action="adv-close" data-id="${a.id}">Mark resolved</button><button class="btn btn--outline btn--xs" data-action="adv-update" data-id="${a.id}">${icon('megaphone', 13)} Post update</button></div>
+          <dl class="padv-areas"><dt>Areas</dt><dd>${esc(areaList(a.areas))}</dd></dl>
+          <dl class="padv-meta"><div><dt>Started</dt><dd>${fmtDateTime(a.startAt)}</dd></div><div><dt>Last update</dt><dd>${relTime(a.updatedAt)}</dd></div><div><dt>Est. restoration</dt><dd>${a.etr ? fmtDateTime(a.etr) : '<span class="muted">Not set</span>'}</dd></div></dl>
+          <div class="padv-a"><button class="btn btn--outline btn--xs" data-action="adv-close" data-id="${a.id}">Mark resolved</button><button class="btn btn--outline btn--xs" data-action="adv-update" data-id="${a.id}">Post update</button></div>
         </div></article>`;
     };
     const awStatus = { AVAILABLE: 'Available', LIMITED: 'Limited', SCHEDULED: 'Scheduled', CLOSED: 'Closed' };
@@ -367,7 +380,7 @@ const advisories = {
           <div class="kpi-top"><span class="kpi-label">Active Advisories</span>${src('MANUAL')}</div>
           <div class="kp-main"><div><div class="kpi-value kpi-value--xl">${active.length}</div>
             <div class="kpi-sub">${active.length ? `Reaching about <strong>${fmt(reach)}</strong> connections` : 'No notices currently shown to residents'}</div></div></div>
-          ${active.length ? `<ul class="adv-sum">${active.map((a) => `<li>${kindDot(a)}<span>${esc(a.title)}</span><span class="muted">${a.areas.map((z) => zoneById(z).short).join(', ')}</span></li>`).join('')}</ul>` : ''}
+          ${active.length ? `<ul class="adv-sum">${active.map((a) => `<li><span>${esc(a.title)}</span><span class="muted">${esc(areaList(a.areas))}</span></li>`).join('')}</ul>` : ''}
           <div class="kp-foot"><span>${dueNext ? `Next resident update <strong class="mono">${dueNext.id}</strong>, ${fmtTime(dueNext.nextUpdate)}` : 'No updates scheduled'}</span><span class="kp-flag kp-flag--${lateUpdates.length ? 'warn' : 'ok'}">${lateUpdates.length ? `${lateUpdates.length} update${lateUpdates.length > 1 ? 's' : ''} late` : 'Updates on schedule'}</span></div>
         </section>
         ${kpi({ label: 'Barangays affected', value: zones.length, sub: zones.length ? zones.map((z) => zoneById(z).short).join(', ') : 'All barangays normal' })}

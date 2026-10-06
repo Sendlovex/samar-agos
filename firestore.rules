@@ -44,11 +44,12 @@ service cloud.firestore {
       allow read, write: if isProvider();
     }
 
-    // Valid ID photos: uploaded by the account owner, visible to the owner and staff.
+    // Valid ID: the photo is in Firebase Storage (validIds/{uid}/…); this document records its link.
     match /validIds/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isProvider());
       allow create, update: if signedIn() && request.auth.uid == uid
-        && request.resource.data.image is string && request.resource.data.image.size() < 950000;
+        && request.resource.data.url is string
+        && request.resource.data.path.matches('validIds/' + uid + '/.*');
       allow delete: if isProvider() || (signedIn() && request.auth.uid == uid);
     }
     function hasValidId() {

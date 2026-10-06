@@ -18,6 +18,7 @@ let F = null; // SDK functions
 let A = null; // firebase-app module (a second app instance creates responder accounts)
 let auth = null;
 let db = null;
+let storage = null; // Firebase Storage: photos (valid IDs, reports, work orders)
 let session = null; // { uid, email, profile, isProvider }
 let ready = false;
 let unsubs = [];
@@ -37,12 +38,13 @@ if (typeof window !== 'undefined') ['online', 'offline'].forEach((e) => window.a
 
 // ---------------------------------------------------------------- init
 export async function initBackend() {
-  const [app, a, fs] = await Promise.all([import(`${SDK}/firebase-app.js`), import(`${SDK}/firebase-auth.js`), import(`${SDK}/firebase-firestore.js`)]);
-  F = { ...a, ...fs };
+  const [app, a, fs, st] = await Promise.all([import(`${SDK}/firebase-app.js`), import(`${SDK}/firebase-auth.js`), import(`${SDK}/firebase-firestore.js`), import(`${SDK}/firebase-storage.js`)]);
+  F = { ...a, ...fs, storageRef: st.ref, uploadString: st.uploadString, getDownloadURL: st.getDownloadURL };
   A = app;
   const fbApp = app.initializeApp(FIREBASE_CONFIG);
   auth = a.getAuth(fbApp);
   db = fs.getFirestore(fbApp);
+  storage = st.getStorage(fbApp);
   S.onAdvisoryChange(pingAdvisoryEmail);
 }
 
@@ -61,6 +63,14 @@ const commitOps = (ops, store = db) => F.runTransaction(store, async (tx) => ops
 const setDoc = (ref, data, opts) => commitOps([(t) => (opts ? t.set(ref, data, opts) : t.set(ref, data))], ref.firestore);
 const updateDoc = (ref, data) => commitOps([(t) => t.update(ref, data)], ref.firestore);
 const deleteDoc = (ref) => commitOps([(t) => t.delete(ref)], ref.firestore);
+
+// ---------------------------------------------------------------- photos (Firebase Storage)
+// Photos are stored as files; Firestore keeps only the download link. Paths match storage.rules.
+export async function uploadImage(path, dataUrl) {
+  const ref = F.storageRef(storage, path);
+  await F.uploadString(ref, dataUrl, 'data_url', { cacheControl: 'private, max-age=86400' });
+  return F.getDownloadURL(ref);
+}
 
 // ---------------------------------------------------------------- auth
 export const onAuth = (cb) => F.onAuthStateChanged(auth, cb);
@@ -141,10 +151,12 @@ export async function changePassword(current, next) {
 }
 
 // ---------------------------------------------------------------- valid ID
-// The ID photo lives in its own document (validIds/{uid}) so lists of users stay small.
+// The ID photo is a file in Storage (validIds/{uid}/…); validIds/{uid} records its link.
 // Reporting requires that document (enforced in firestore.rules), so a profile flag alone is not enough.
 export async function saveValidId(image) {
-  await setDoc(F.doc(db, 'validIds', session.uid), { uid: session.uid, image, uploadedAt: Date.now() });
+  const path = `validIds/${session.uid}/${Date.now()}.jpg`;
+  const url = await uploadImage(path, image);
+  await setDoc(F.doc(db, 'validIds', session.uid), { uid: session.uid, path, url, uploadedAt: Date.now() });
   await saveProfile({ idSubmitted: true, idUploadedAt: Date.now() });
 }
 export async function getValidId(uid) {
@@ -237,6 +249,15 @@ export async function listReadings(barangay) {
 export async function myReadings() {
   const snap = await F.getDocs(F.query(F.collection(db, 'meterReadings'), F.where('uid', '==', session.uid)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+// Meter readings recorded in a date range (all barangays), with household names for the export.
+export async function readingsBetween(r) {
+  const m = (ts) => new Date(ts).toLocaleDateString('en-CA').slice(0, 7);
+  const snap = await F.getDocs(F.query(F.collection(db, 'meterReadings'), F.where('month', '>=', m(r.from)), F.where('month', '<=', m(r.to))));
+  const rows = snap.docs.map((d) => d.data());
+  const users = await F.getDocs(F.collection(db, 'users'));
+  const names = Object.fromEntries(users.docs.map((d) => [d.id, d.data().name]));
+  return rows.map((x) => ({ ...x, name: names[x.uid] || x.uid }));
 }
 export async function saveReading({ uid, barangay, month, m3 }) {
   const doc = { uid, barangay, month, m3, recordedAt: Date.now(), recordedBy: session.email };
