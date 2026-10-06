@@ -33,6 +33,7 @@ const RES_NAV = [
   { group: 'My Service', items: [
     { id: 'home', label: 'My Water Service', icon: 'home' },
     { id: 'advisories', label: 'Advisories', icon: 'megaphone', count: () => S.getState().advisories.filter((a) => a.status === 'Active' && a.areas.includes(RESIDENT.zone)).length },
+    { id: 'water-safety', label: 'Water Safety', icon: 'shield' },
     { id: 'outlook', label: 'Water Outlook', icon: 'forecast' },
   ] },
   { group: 'Reports', items: [
@@ -408,9 +409,9 @@ function renderShell(area, page, html) {
       <header class="tb">
         <button class="icon-btn tb-menu" data-action="sb-open" aria-label="Open navigation">${icon('menu', 20)}</button>
         <div class="tb-mlogo">${logoMark(28)}</div>
-        ${res ? '' : `<div class="tb-fresh" id="tb-fresh">${freshness()}</div>`}
+        ${res ? `<span id="tb-status">${headerStatus()}</span>` : `<div class="tb-fresh" id="tb-fresh">${freshness()}</div>`}
         <div class="tb-right">
-          <span id="tb-status">${headerStatus()}</span>
+          ${res ? '' : `<span id="tb-status">${headerStatus()}</span>`}
           ${res ? '' : `<button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>`}
           <a href="#/${area}/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
           ${accountMenu(res)}
@@ -453,6 +454,9 @@ function freshness() {
 function headerStatus() {
   if (current?.area === 'r') {
     const r = S.residentService();
+    // Same rule as the home status card: unsafe water outranks "normal" service.
+    if (r.sev === 'normal' && S.waterSafety().verdict === 'unsafe')
+      return `<a href="#/r/home" class="tb-sys" title="Water tests found a problem. Do not drink tap water.">${status('critical', `Zone ${esc(RESIDENT.zone)} · Don't drink tap water`)}</a>`;
     const label = r.label.charAt(0) + r.label.slice(1).toLowerCase();
     return `<a href="#/r/home" class="tb-sys" title="Service status for your area">${status(r.sev, `Zone ${esc(RESIDENT.zone)} · ${esc(label)}`)}</a>`;
   }

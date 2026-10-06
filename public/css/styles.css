@@ -42,6 +42,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body { margin: 0; font-family: var(--font); font-size: 14px; line-height: 1.5; color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
 h1, h2, h3, h4 { margin: 0; line-height: 1.25; letter-spacing: -0.01em; }
@@ -493,7 +494,6 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--blue-600); wid
 .auth-submit:hover { background: #163d66; }
 .auth-submit:disabled { opacity: 0.7; }
 .auth-err { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--crit-line); background: var(--surface); color: var(--ink); font-size: 13px; }
-.auth-err[hidden] { display: none; }
 .auth-err .ic { color: var(--crit); margin-top: 1px; }
 .auth-alt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: center; margin-top: 20px; font-size: 13.5px; color: var(--ink-2); }
 .auth-alt .linkish { font-weight: 700; text-decoration: none; color: #0d2a4a; }
@@ -530,10 +530,17 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--blue-600); wid
 
 /* resident status hero */
 /* Resident home: plain-language service card (white card + severity accent, like operator cards). */
-.rsvc { background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-lg); box-shadow: var(--sh-1); padding: 22px 24px; }
+/* The most important thing on the page: tinted by status (blue when all is well). */
+.rsvc { --st: var(--blue-600); --st-bg: var(--blue-50); --st-line: var(--blue-100); position: relative; overflow: hidden; background: linear-gradient(135deg, var(--st-bg) 0%, var(--surface) 70%); border: 1.5px solid var(--st-line); border-radius: var(--r-lg); box-shadow: var(--sh-2); padding: 26px 28px; }
+.rsvc--warn { --st: var(--warn-fill); --st-bg: var(--warn-bg); --st-line: var(--warn-line); }
+.rsvc--crit { --st: var(--crit); --st-bg: var(--crit-bg); --st-line: var(--crit-line); }
+.rsvc--info { --st: var(--info); --st-bg: var(--info-bg); --st-line: var(--info-line); }
+.rsvc--off { --st: var(--off); --st-bg: var(--off-bg); --st-line: var(--off-line); }
+/* problems get a stronger wash than normal service */
+.rsvc--warn, .rsvc--crit { background: linear-gradient(135deg, var(--st-bg) 0%, var(--st-bg) 45%, var(--surface) 100%); border-width: 2px; }
 .rsvc-main { display: flex; gap: 18px; align-items: flex-start; }
-.rsvc-h { display: flex; align-items: center; gap: 12px; font-size: 26px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; color: var(--ink); }
-.rsvc-h .sys-dot { width: 12px; height: 12px; }
+.rsvc-k { display: block; margin-bottom: 8px; font-size: 11.5px; font-weight: 750; text-transform: uppercase; letter-spacing: 0.08em; color: var(--st); }
+.rsvc-h { display: flex; align-items: center; gap: 14px; font-size: 30px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; color: var(--ink); }
 .rsvc-p { margin-top: 6px; font-size: 16px; line-height: 1.5; color: var(--ink-2); max-width: 680px; }
 .rsvc-by { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
 .rsvc-when { display: flex; gap: 12px; align-items: flex-start; margin-top: 18px; padding: 14px 16px; border-radius: var(--r); background: var(--surface-2); border: 1px solid var(--line-2); color: var(--blue-600); }
@@ -555,6 +562,27 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--blue-600); wid
 .tips { list-style: none; margin: 0; padding: 0; }
 .tips li { font-size: 14.5px; line-height: 1.5; color: var(--ink); }
 .tips li + li { margin-top: 10px; }
+.r-row { margin-top: 16px; }
+.r-alert:not(:empty) { margin-top: 16px; }
+.safe-v { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 800; letter-spacing: -0.01em; color: var(--ink); }
+.safe-v .sys-dot { width: 11px; height: 11px; }
+.safe-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.safe-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-2); font-size: 13.5px; color: var(--ink); }
+.safe-list li span:nth-child(2) { flex: 1; }
+.safe-list em { font-style: normal; font-size: 12.5px; font-weight: 650; color: var(--muted); }
+.safe-list em.is-bad { color: var(--crit); }
+.safe-list li > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; }
+.safe-list strong { font-weight: 600; }
+.safe-list--why li { align-items: flex-start; padding: 12px 0; }
+.safe-list--why .sys-dot { margin-top: 7px; }
+.safe-list--why small { font-size: 12.5px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+.safe-list--why em { margin-top: 2px; }
+.safe-list li:first-child { border-top: 0; }
+.safe-hero { border-width: 1.5px; }
+.safe-hero--ok { border-color: var(--blue-100); background: linear-gradient(135deg, var(--blue-50), var(--surface) 70%); }
+.safe-hero--warn { border-color: var(--warn-line); background: linear-gradient(135deg, var(--warn-bg), var(--surface) 70%); }
+.safe-hero--crit { border-color: var(--crit-line); background: linear-gradient(135deg, var(--crit-bg), var(--surface) 70%); }
+.safe-hero .safe-v { font-size: 26px; }
 .ol-big { margin-bottom: 2px; }
 
 .adv { border: 1px solid var(--line); border-radius: var(--r); padding: 14px; background: var(--surface); }
@@ -1231,8 +1259,8 @@ a.padv-id:hover { color: var(--blue-600); }
   .qa { grid-template-columns: 1fr 1fr; }
   .qa-b:last-child { grid-column: 1 / -1; }
   .qa-b { min-height: 96px; }
-  .rsvc { padding: 18px; }
-  .rsvc-h { font-size: 22px; }
+  .rsvc { padding: 20px 18px; }
+  .rsvc-h { font-size: 23px; gap: 12px; }
   .rsvc-p { font-size: 15px; }
   .rsvc-steps li { font-size: 11px; }
   .adv-past-r { grid-template-columns: auto minmax(0, 1fr); }

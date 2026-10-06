@@ -105,6 +105,7 @@ function fixStep(svc) {
 function homeStatus() {
   const s = st();
   const svc = S.residentService(s);
+  // Water service only (is water flowing?). Drinking-water safety has its own banner and card.
   const [headline, fallback] = FRIENDLY[svc.label] || [titleCase(svc.label), ''];
   const cls = SEV[svc.sev].cls;
   const fromProvider = svc.advisory && !svc.restored;
@@ -115,7 +116,8 @@ function homeStatus() {
   return `<section class="rsvc rsvc--${cls}" aria-labelledby="rsvc-title">
     <div class="rsvc-main">
       <div class="rsvc-txt">
-        <h2 id="rsvc-title" class="rsvc-h"><span class="sys-dot sys-dot--${cls}" aria-hidden="true"></span>${esc(headline)}</h2>
+        <span class="rsvc-k">Your water service</span>
+        <h2 id="rsvc-title" class="rsvc-h">${esc(headline)}</h2>
         <p class="rsvc-p">${esc(fromProvider ? svc.message : fallback || svc.message)}</p>
         ${fromProvider ? `<p class="rsvc-by">${icon('megaphone', 14)} Message from ${esc(UTILITY.name)}</p>` : ''}
       </div>
@@ -134,7 +136,8 @@ function homeTips() {
   const alt = s.altWater.filter((p) => p.active && p.zone === RESIDENT.zone && p.status !== 'CLOSED');
   const tips = [];
   const problem = svc.sev !== 'normal' && !svc.restored;
-  if (svc.label === 'QUALITY ADVISORY') tips.push('Use boiled or bottled water for drinking and cooking until the advisory ends.');
+  if (S.waterSafety(s).verdict === 'unsafe') tips.push('<strong>Do not drink tap water.</strong> Boil it for at least 1 minute, or use bottled water, for drinking, cooking and brushing teeth.');
+  else if (svc.label === 'QUALITY ADVISORY') tips.push('Use boiled or bottled water for drinking and cooking until the advisory ends.');
   else if (problem) tips.push('Save stored water for drinking, cooking and washing hands.');
   if (svc.label === 'NO WATER' || svc.label === 'INTERMITTENT SUPPLY') tips.push('Keep faucets closed so water doesn\'t run when it comes back.');
   if (svc.advisory?.instructions && !svc.restored) tips.push(esc(svc.advisory.instructions));
@@ -145,6 +148,90 @@ function homeTips() {
   if (!problem) tips.push('Notice a problem? <a href="#/r/report">Report it</a>. It only takes a minute.');
   return card('What you can do', `<ul class="tips">${tips.map((t) => `<li>${t}</li>`).join('')}</ul>`);
 }
+
+// ---------------------------------------------------------------- WATER SAFETY
+// The provider's Water Safety verdict in everyday words. Readings come from the monitoring
+// points before water reaches every zone, plus lab tests for germs.
+const SAFE_WORDS = {
+  safe: ['Yes, safe to drink', 'Tap water meets drinking-water standards. It is checked before it reaches your area.'],
+  caution: ['Yes, but being watched', 'Water still meets health limits. One reading is slightly off, so your water provider is keeping an eye on it.'],
+  unsafe: ['No, do not drink tap water', 'Tests found a problem with the water. Use boiled or bottled water until your provider says it is safe again.'],
+};
+const SAFE_SEV = { safe: 'normal', caution: 'warning', unsafe: 'critical' };
+const SAFE_CHECKS = [
+  { label: 'Clear, not cloudy', keys: ['turb'], why: 'Cloudy water can hide germs from the disinfectant.' },
+  { label: 'Enough disinfectant', keys: ['cl'], why: 'A small amount of chlorine keeps water clean all the way to your tap.' },
+  { label: 'Balanced (not acidic)', keys: ['ph'], why: 'Water that is too acidic or too alkaline can damage pipes and weaken the disinfectant.' },
+  { label: 'Low in dissolved minerals', keys: ['tds'], why: 'Too many dissolved minerals can affect taste and may be a sign of pollution.' },
+  { label: 'No harmful germs', keys: ['ecoli', 'coliform'], why: 'A laboratory tests water samples for bacteria that can cause stomach illness.' },
+];
+// Plain names for the provider's monitoring points, in the order water flows.
+const SAFE_POINTS = { 'WQ-1': 'At the treatment plant', 'WQ-2': 'Leaving the main reservoir', 'WQ-3': 'Before it reaches your area' };
+
+const safeVerdict = (ws) => {
+  const [title, text] = SAFE_WORDS[ws.verdict];
+  return `<p class="safe-v"><span class="sys-dot sys-dot--${SEV[SAFE_SEV[ws.verdict]].cls}" aria-hidden="true"></span>${title}</p><p class="ol-t">${text}</p>`;
+};
+const passMark = (ok) => `<em class="${ok ? '' : 'is-bad'}">${ok ? 'Passed' : 'Problem found'}</em>`;
+
+// Shown under the service card only when tests say the water is not safe to drink.
+function homeSafetyAlert() {
+  if (S.waterSafety(st()).verdict !== 'unsafe') return '';
+  return alertBanner(
+    'critical',
+    'Do not drink tap water right now',
+    'Water tests found a problem. Tap water is fine for flushing and cleaning, but boil it for at least 1 minute or use bottled water for drinking and cooking.',
+    `<a class="btn btn--sm btn--outline" href="#/r/water-safety">See test results</a>`
+  );
+}
+
+// Home: summary only — the details live on the Water Safety page.
+function homeSafety() {
+  const ws = S.waterSafety(st());
+  return card('Is your water safe to drink?', `${safeVerdict(ws)}<p class="fine">Checked all day by sensors. Last lab test for germs: ${relTime(ws.labAt)}.</p>`, {
+    sub: 'Checked automatically, every few minutes',
+    actions: `<a class="link" href="#/r/water-safety">See details ${icon('chev-r', 14)}</a>`,
+  });
+}
+
+function safetyMain() {
+  const ws = S.waterSafety(st());
+  const all = [...ws.stations.flatMap((x) => x.params), ...ws.lab];
+  const checks = SAFE_CHECKS.map((c) => {
+    const ok = all.filter((p) => c.keys.includes(p.key)).every((p) => p.sev === 'normal');
+    return `<li><span class="sys-dot sys-dot--${ok ? 'ok' : 'crit'}" aria-hidden="true"></span><span><strong>${c.label}</strong><small>${c.why}</small></span>${passMark(ok)}</li>`;
+  }).join('');
+  const points = ws.stations.map((x) => `<li><span class="sys-dot sys-dot--${x.sev === 'normal' ? 'ok' : 'crit'}" aria-hidden="true"></span><span><strong>${SAFE_POINTS[x.id] || esc(x.name)}</strong></span>${passMark(x.sev === 'normal')}</li>`).join('');
+  const labOk = ws.lab.every((p) => p.sev === 'normal');
+  const unsafe = ws.verdict === 'unsafe';
+  return `${card('Is your water safe to drink?', `${safeVerdict(ws)}<p class="fine">Sensors check the water every few minutes. Last lab test for germs: ${relTime(ws.labAt)}.</p>`, { cls: `safe-hero safe-hero--${SEV[SAFE_SEV[ws.verdict]].cls}` })}
+    <div class="r-grid">
+      <div>${card('What we test for', `<ul class="safe-list safe-list--why">${checks}</ul>`, { sub: 'Based on the Philippine drinking-water standards' })}</div>
+      <div class="r-col">
+        ${card('Where we check', `<ul class="safe-list">${points}<li><span class="sys-dot sys-dot--${labOk ? 'ok' : 'crit'}" aria-hidden="true"></span><span><strong>Laboratory germ test</strong></span>${passMark(labOk)}</li></ul>`, { sub: 'Water is tested on its way to your home' })}
+        ${card(
+          unsafe ? 'What to do now' : 'If water is ever unsafe',
+          `<ul class="tips">
+            <li>Boil water for at least 1 minute, or use bottled water, for drinking, cooking, making ice and brushing teeth.</li>
+            <li>Tap water is still fine for flushing toilets, cleaning and washing clothes.</li>
+            <li>We will tell you here and send a notification as soon as water is safe again.</li>
+            <li>Water looks dirty or smells strange? <a href="#/r/report">Report it</a>.</li>
+          </ul>`
+        )}
+      </div>
+    </div>`;
+}
+
+const waterSafetyPage = {
+  title: 'Water Safety',
+  regions: { main: safetyMain },
+  render() {
+    return `<div class="r-page">
+      <div class="page-h"><div><h1>Water Safety</h1><p class="page-sub">Is your tap water safe to drink? Here is what the tests show.</p></div></div>
+      <div data-region="main">${safetyMain()}</div>
+    </div>`;
+  },
+};
 
 function homeOutlook() {
   const fc = S.forecast({ hours: 24 });
@@ -178,7 +265,7 @@ function homeLatest() {
 
 const home = {
   title: 'My Water Service',
-  regions: { status: homeStatus, tips: homeTips, outlook: homeOutlook },
+  regions: { status: homeStatus, safetyAlert: homeSafetyAlert, safety: homeSafety, tips: homeTips, outlook: homeOutlook },
   render() {
     const s = st();
     const adv = s.advisories.filter((a) => a.status === 'Active' && a.areas.includes(RESIDENT.zone));
@@ -187,10 +274,12 @@ const home = {
     return `<div class="r-page">
       <div class="page-h"><div><h1>${hello}, ${esc(RESIDENT.name.split(' ')[0])}</h1><p class="page-sub">${icon('pin', 14)} Water service for ${esc(brgyName(RESIDENT.barangay))}</p></div></div>
       <div data-region="status">${homeStatus()}</div>
+      <div class="r-alert" data-region="safetyAlert">${homeSafetyAlert()}</div>
       <div class="r-grid">
-        <div data-region="tips">${homeTips()}</div>
+        <div data-region="safety">${homeSafety()}</div>
         <div data-region="outlook">${homeOutlook()}</div>
       </div>
+      <div class="r-row" data-region="tips">${homeTips()}</div>
       ${card(
         'Having a water problem?',
         `<div class="qa">${[
@@ -691,6 +780,7 @@ export const residentViews = {
   consumption,
   outlook,
   'water-access': waterAccess,
+  'water-safety': waterSafetyPage,
   notifications,
   profile,
 };
