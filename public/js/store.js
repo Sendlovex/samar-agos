@@ -163,6 +163,7 @@ export function applyControl(d) {
   if (!d.emergencyActive) s.emergency = { active: false, poolML: 0 };
   if (d.volOverride && d.volOverride.at > (s.volOverride?.at || 0)) s.tele.volML = d.volOverride.volML;
   s.volOverride = d.volOverride || null;
+  if (d.wqMode && (d.wqAt || 0) > (wqInit(s).at || 0)) setWaterQuality(d.wqMode, { at: d.wqAt, silent: true });
   updateDerived(s.tele, s.tele.simTime);
   emitSoon();
 }
@@ -302,6 +303,103 @@ function updateDerived(tele, simTime) {
   tele.reserveHours = (tele.volML + tankVol + (state.emergency.active ? state.emergency.poolML : 0)) / (tele.demand / 24);
 }
 
+// ---------------------------------------------------------------- water safety (potability)
+// Simulated online analysers at three points before water reaches residents, checked against the
+// Philippine National Standards for Drinking Water (PNSDW 2017). Lab results (E. coli, coliform) are manual.
+export const WQ_PARAMS = [
+  { key: 'ph', label: 'pH', unit: '', min: 6.5, max: 8.5, d: 1, std: '6.5 – 8.5', why: 'Outside this range water can corrode pipes or make chlorine less effective.' },
+  { key: 'turb', label: 'Turbidity', unit: 'NTU', max: 5, d: 2, std: '≤ 5 NTU', why: 'Cloudy water can shield germs from disinfection.' },
+  { key: 'cl', label: 'Free residual chlorine', short: 'Chlorine', unit: 'mg/L', min: 0.3, max: 1.5, d: 2, std: '0.3 – 1.5 mg/L', why: 'Enough chlorine must remain to keep water disinfected on the way to homes.' },
+  { key: 'temp', label: 'Temperature', unit: '°C', max: 32, d: 1, std: '≤ 32 °C (operational)', why: 'Warm water speeds up bacterial growth and chlorine loss.', operational: true },
+  { key: 'tds', label: 'Total dissolved solids', short: 'TDS', unit: 'mg/L', max: 600, d: 0, std: '≤ 600 mg/L', why: 'High dissolved solids affect taste and may signal contamination.' },
+];
+export const WQ_LAB = [
+  { key: 'ecoli', label: 'E. coli', unit: 'MPN/100 mL', max: 1.1, std: '< 1.1 MPN/100 mL' },
+  { key: 'coliform', label: 'Total coliform', unit: 'MPN/100 mL', max: 1.1, std: '< 1.1 MPN/100 mL' },
+];
+export const WQ_STATIONS = [
+  { id: 'WQ-1', name: 'Treatment plant outlet', where: 'Antiao Treatment Plant · after chlorination' },
+  { id: 'WQ-2', name: 'Central Reservoir outlet', where: 'Central Reservoir · leaving storage' },
+  { id: 'WQ-3', name: 'Distribution entry', where: 'Main line · before zone valves' },
+];
+// Typical values per point (chlorine decays and water warms slightly downstream).
+const WQ_TARGET = {
+  safe: [
+    { ph: 7.2, turb: 0.45, cl: 0.95, temp: 27.4, tds: 205 },
+    { ph: 7.3, turb: 0.55, cl: 0.78, temp: 27.9, tds: 210 },
+    { ph: 7.3, turb: 0.7, cl: 0.62, temp: 28.4, tds: 214 },
+  ],
+  unsafe: [
+    { ph: 5.9, turb: 8.6, cl: 0.12, temp: 33.4, tds: 760 },
+    { ph: 6.0, turb: 9.4, cl: 0.08, temp: 33.8, tds: 780 },
+    { ph: 6.1, turb: 10.2, cl: 0.05, temp: 34.1, tds: 795 },
+  ],
+};
+const WQ_NOISE = { ph: 0.04, turb: 0.06, cl: 0.03, temp: 0.12, tds: 4 };
+const WQ_LAB_RESULT = { safe: { ecoli: 0, coliform: 0 }, unsafe: { ecoli: 4.6, coliform: 23 } };
+const WQ_HIST = 144; // 12 simulated hours
+
+function wqInit(s) {
+  if (s.wq) return s.wq;
+  const now = s.tele?.simTime || Date.now();
+  s.wq = { mode: 'safe', at: 0, stations: {}, hist: { t: [] }, lab: { ...WQ_LAB_RESULT.safe, at: Date.now() - 3 * 3600e3 } };
+  WQ_STATIONS.forEach((st, i) => {
+    s.wq.stations[st.id] = { ...WQ_TARGET.safe[i] };
+    s.wq.hist[st.id] = Object.fromEntries(WQ_PARAMS.map((p) => [p.key, []]));
+  });
+  // pre-fill a quiet 12-hour history so trends aren't empty
+  for (let k = WQ_HIST; k > 0; k--) wqStep(s, now - k * DT_MIN * 60000, 1);
+  return s.wq;
+}
+
+function wqStep(s, t, pull = 0.25) {
+  const w = s.wq;
+  const tgt = WQ_TARGET[w.mode] || WQ_TARGET.safe;
+  const push = (arr, v) => (arr.push(v), arr.length > WQ_HIST && arr.shift());
+  push(w.hist.t, t);
+  WQ_STATIONS.forEach((st, i) => {
+    const cur = w.stations[st.id];
+    WQ_PARAMS.forEach((p) => {
+      const v = cur[p.key] + (tgt[i][p.key] - cur[p.key]) * pull + (rand() - 0.5) * 2 * WQ_NOISE[p.key];
+      cur[p.key] = Math.max(0, v);
+      push(w.hist[st.id][p.key], cur[p.key]);
+    });
+  });
+}
+
+// Demo control: jump all readings to safe or unsafe water and record a matching lab sample.
+export function setWaterQuality(mode, { at = Date.now(), silent = false } = {}) {
+  const w = wqInit(state);
+  w.mode = mode === 'unsafe' ? 'unsafe' : 'safe';
+  w.at = at;
+  WQ_STATIONS.forEach((st, i) => {
+    const tgt = WQ_TARGET[w.mode][i];
+    Object.keys(tgt).forEach((k) => (w.stations[st.id][k] = tgt[k] + (rand() - 0.5) * 2 * WQ_NOISE[k]));
+  });
+  w.lab = { ...WQ_LAB_RESULT[w.mode], at };
+  if (silent) return emitSoon();
+  commit(w.mode === 'safe' ? 'Water quality set to SAFE (demo)' : 'Water quality set to NOT SAFE (demo)', w.mode === 'safe' ? 'success' : 'error');
+}
+
+const wqCheck = (p, v) => (v == null ? 'offline' : (p.min != null && v < p.min) || (p.max != null && v > p.max) ? (p.operational ? 'warning' : 'critical') : 'normal');
+
+// Potability verdict: any health-based limit exceeded -> not safe; operational limit only -> caution.
+export function waterSafety(s = state) {
+  const w = wqInit(s);
+  const stations = WQ_STATIONS.map((st) => {
+    const v = w.stations[st.id];
+    const params = WQ_PARAMS.map((p) => ({ ...p, value: v[p.key], sev: wqCheck(p, v[p.key]) }));
+    return { ...st, params, sev: worstSev(params.map((x) => x.sev)) };
+  });
+  const lab = WQ_LAB.map((p) => ({ ...p, value: w.lab[p.key], sev: w.lab[p.key] >= p.max ? 'critical' : 'normal' }));
+  const failures = [
+    ...stations.flatMap((st) => st.params.filter((p) => p.sev !== 'normal').map((p) => ({ ...p, station: st }))),
+    ...lab.filter((p) => p.sev !== 'normal').map((p) => ({ ...p, station: { name: 'Laboratory sample' } })),
+  ];
+  const sev = worstSev([...stations.map((x) => x.sev), ...lab.map((x) => x.sev)]);
+  return { mode: w.mode, at: w.at, stations, lab, labAt: w.lab.at, failures, sev, verdict: sev === 'critical' ? 'unsafe' : sev === 'warning' ? 'caution' : 'safe', hist: w.hist };
+}
+
 // ---------------------------------------------------------------- tick
 export function tick() {
   const s = state;
@@ -309,7 +407,10 @@ export function tick() {
   const dtDays = DT_MIN / 1440;
   const simTime = t.simTime + DT_MIN * 60000;
   const pool = s.emergency.active ? s.emergency.poolML : 0;
-  const r = step(s, simTime, t.volML, pool, dtDays, {});
+  // Real demand wanders around the model: AR(1) noise (~±5%) plus today's weather effect.
+  t.demandNoise = 0.9 * (t.demandNoise || 0) + (rand() - 0.5) * 0.07;
+  const w = weatherModel ? weatherModel(0) : null;
+  const r = step(s, simTime, t.volML, pool, dtDays, { demandPct: (w?.demandPct || 0) + t.demandNoise * 100, inflowPct: w?.inflowPct || 0 });
   if (s.emergency.active) s.emergency.poolML = Math.max(0, r.pool);
   t.simTime = simTime;
   t.lastUpdate = Date.now();
@@ -357,6 +458,9 @@ export function tick() {
     if (count < 34 && rand() < chance) spawnReport(zone, issue.type);
   });
 
+  wqInit(s);
+  wqStep(s, simTime);
+  logForecast(s);
   syncAlertNotifications();
   save();
   emit('tick');
@@ -407,7 +511,7 @@ export function forecast(opts = {}, s = state) {
     pool = r.pool;
     const pct = vol / RES_CAP_ML;
     const hh = (k * stepMin) / 60;
-    if (k % 2 === 0) pts.push({ h: hh, pct });
+    if (k % 2 === 0) pts.push({ h: hh, pct, demand: r.demand });
     if (crossH == null && pct <= MIN_RESERVE) crossH = hh;
     minPct = Math.min(minPct, pct);
     if (hh <= 24) (sumDemand += r.demand), (sumProd += r.production + r.transfer), n++;
@@ -418,6 +522,83 @@ export function forecast(opts = {}, s = state) {
   else if (crossH != null && crossH <= 24) status = 'risk';
   else if (crossH != null || at(24) < 0.45) status = 'watch';
   return { pts, crossH, minPct, now: pts[0].pct, at6: at(6), at12: at(12), at24: at(24), at48: at(48), status, avgDemand: sumDemand / n, avgProd: sumProd / n };
+}
+
+// ---------------------------------------------------------------- forecast accuracy tracking
+// Every FC_EVERY_MIN simulated minutes the current forecast is logged for each horizon. When the target
+// time arrives the measured value is stored next to it, so error can be scored per horizon.
+export const FC_HORIZONS = [1, 6, 24];
+// Proposed acceptable error (to be agreed with the utility): storage in percentage points, demand in %.
+export const FC_TARGETS = { level: { 1: 2, 6: 5, 24: 8 }, demandPct: 10 };
+const FC_EVERY_MIN = 30;
+const FC_KEEP = 900;
+
+function logForecast(s) {
+  const t = s.tele;
+  const log = (s.fcLog ||= []);
+  for (const e of log) {
+    if (e.actual == null && t.simTime >= e.target) (e.actual = t.volML / RES_CAP_ML), (e.actualDemand = t.demand);
+  }
+  if (s.fcLastAt && t.simTime - s.fcLastAt < FC_EVERY_MIN * 60000) return;
+  s.fcLastAt = t.simTime;
+  const fc = forecast({ hours: Math.max(...FC_HORIZONS) }, s);
+  FC_HORIZONS.forEach((h) => {
+    const p = fc.pts.find((x) => x.h >= h);
+    if (p) log.push({ made: t.simTime, h, target: t.simTime + h * 3600e3, pred: p.pct, predDemand: p.demand, actual: null, actualDemand: null });
+  });
+  if (log.length > FC_KEEP) log.splice(0, log.length - FC_KEEP);
+}
+
+const pctile = (arr, q) => {
+  if (!arr.length) return null;
+  const a = [...arr].sort((x, y) => x - y);
+  return a[Math.min(a.length - 1, Math.floor(q * a.length))];
+};
+
+// Per-horizon error summary. Storage errors are in percentage points; demand error is MAPE (%).
+export function forecastAccuracy(s = state) {
+  const log = s.fcLog || [];
+  return FC_HORIZONS.map((h) => {
+    const all = log.filter((e) => e.h === h);
+    const done = all.filter((e) => e.actual != null);
+    const err = done.map((e) => (e.pred - e.actual) * 100);
+    const abs = err.map(Math.abs);
+    const dErr = done.filter((e) => e.actualDemand > 0).map((e) => (Math.abs(e.predDemand - e.actualDemand) / e.actualDemand) * 100);
+    const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+    const target = FC_TARGETS.level[h];
+    return {
+      h,
+      n: done.length,
+      pending: all.length - done.length,
+      mae: mean(abs),
+      bias: mean(err),
+      p90: pctile(abs, 0.9),
+      mape: mean(dErr),
+      target,
+      withinPct: abs.length ? (abs.filter((v) => v <= target).length / abs.length) * 100 : null,
+    };
+  });
+}
+
+// Uncertainty half-width (percentage points) at any horizon, from the 90th-percentile error of scored
+// forecasts. Returns null until at least one horizon has enough comparisons.
+export const FC_MIN_SAMPLES = 5;
+export function forecastBand(s = state) {
+  let run = 0; // uncertainty can't shrink with a longer horizon
+  const pts = forecastAccuracy(s).filter((a) => a.n >= FC_MIN_SAMPLES).map((a) => [a.h, (run = Math.max(run, a.p90))]);
+  if (!pts.length) return null;
+  const known = [[0, 0], ...pts];
+  return (hh) => {
+    const hi = known.findIndex(([h]) => h >= hh);
+    if (hi === -1) {
+      const [h, v] = known[known.length - 1];
+      return v * Math.sqrt(hh / h); // beyond the longest scored horizon, grow with √time
+    }
+    if (hi === 0) return 0;
+    const [h0, v0] = known[hi - 1];
+    const [h1, v1] = known[hi];
+    return v0 + ((v1 - v0) * (hh - h0)) / (h1 - h0);
+  };
 }
 
 export const FORECAST_STATUS = {
@@ -480,6 +661,9 @@ export function deriveAlerts(s = state) {
     .forEach((c) => a.push({ key: `cluster-${c.zone}`, sev: 'warning', cat: 'Reports', title: `New report cluster — Zone ${c.zone}`, detail: `${c.reports.length} unreviewed resident reports`, link: '#/p/incidents' }));
   s.assets.filter((x) => x.status === 'offline').forEach((x) => a.push({ key: `offline-${x.id}`, sev: 'offline', cat: 'Equipment', title: `${x.type} offline — ${x.id}`, detail: `${x.name} is not reporting`, link: `#/p/assets/${x.id}` }));
   if (t.turbidityE > 4) a.push({ key: 'turbidity-E', sev: 'info', cat: 'Water Quality', title: 'Turbidity elevated — Zone E', detail: `${t.turbidityE.toFixed(1)} NTU at TS-E1 (guideline 5 NTU)`, link: '#/p/incidents/INC-2026-039' });
+  const ws = waterSafety(s);
+  if (ws.verdict === 'unsafe') a.push({ key: 'potability', sev: 'critical', cat: 'Water Quality', title: 'Water not safe to drink', detail: `${ws.failures.length} reading${ws.failures.length > 1 ? 's' : ''} outside drinking-water limits`, link: '#/p/water-safety' });
+  else if (ws.verdict === 'caution') a.push({ key: 'potability', sev: 'warning', cat: 'Water Quality', title: 'Water quality needs attention', detail: ws.failures.map((f) => f.label).join(', '), link: '#/p/water-safety' });
   s.workOrders.filter((w) => w.status !== 'Completed' && w.target < Date.now()).forEach((w) => a.push({ key: `overdue-${w.id}`, sev: 'warning', cat: 'Work Orders', title: `Overdue work order — ${w.id}`, detail: w.description, link: `#/p/work-orders/${w.id}` }));
   return a.sort((x, y) => SEV_RANK[y.sev] - SEV_RANK[x.sev]);
 }

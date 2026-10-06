@@ -1,4 +1,4 @@
-// Provider portal: overview dashboard, operations, advisories, assets, maintenance, analytics.
+// Provider portal: overview dashboard, operations, advisories, assets, analytics.
 import * as S from '../store.js';
 import { ZONES, zoneById, UTILITY, reportTypeLabel, REPORT_TYPES } from '../data.js';
 import { icon, status, src, card, kpi, empty, tabs, table, field, openModal, closeOverlay, register, registerInputs, formData, updatedAgo, priorityBadge, sevBadge, alertBanner, SEV, confirmDialog } from '../ui.js';
@@ -8,6 +8,7 @@ import { esc, fmt, fmtL, fmtTime, fmtDate, fmtDateShort, fmtDateTime, relTime, h
 import { notificationsView, go } from '../app.js';
 import { incidentViews } from './provider-incidents.js';
 import { forecastViews } from './provider-forecast.js';
+import { safetyViews } from './provider-safety.js';
 import { openAdvisoryModal, openWorkOrderModal, incStatus, woStatusBadge, ZONE_COLORS, incidentTable } from './provider-shared.js';
 
 const st = () => S.getState();
@@ -283,25 +284,68 @@ const advisories = {
   title: 'Advisories',
   render() {
     const s = st();
-    const active = s.advisories.filter((a) => a.status === 'Active');
-    const past = s.advisories.filter((a) => a.status !== 'Active');
-    const advRow = (a) => `<article class="padv"><div class="padv-h">${status(a.status === 'Active' ? (a.kind === 'Water Quality' ? 'info' : 'warning') : 'normal', a.status === 'Active' ? a.serviceStatus : 'Resolved')}<span class="mono muted sm">${a.id}</span>${a.incidentId ? `<a class="mono sm" href="#/p/incidents/${a.incidentId}">${a.incidentId}</a>` : ''}</div>
-      <h3>${esc(a.title)}</h3><p>${esc(a.message)}</p>
-      <dl class="kv kv--4"><div><dt>Areas</dt><dd>${a.areas.map((z) => zoneById(z).short).join(', ')}</dd></div><div><dt>Started</dt><dd>${fmtDateTime(a.startAt)}</dd></div><div><dt>Last update</dt><dd>${relTime(a.updatedAt)}</dd></div><div><dt>${a.etr ? 'Est. restoration' : 'Next update'}</dt><dd>${a.etr ? fmtTime(a.etr) : a.nextUpdate ? fmtTime(a.nextUpdate) : '—'}</dd></div></dl>
-      ${a.status === 'Active' ? `<div class="padv-a"><button class="btn btn--outline btn--xs" data-action="adv-update" data-id="${a.id}">Post update</button><button class="btn btn--ghost btn--xs" data-action="adv-close" data-id="${a.id}">Mark resolved</button></div>` : ''}</article>`;
+    const active = s.advisories.filter((a) => a.status === 'Active').sort((a, b) => (a.nextUpdate || Infinity) - (b.nextUpdate || Infinity));
+    const past = s.advisories.filter((a) => a.status !== 'Active').sort((a, b) => b.updatedAt - a.updatedAt);
+    const now = Date.now();
+    const zones = [...new Set(active.flatMap((a) => a.areas))];
+    const reach = zones.reduce((n, z) => n + (zoneById(z)?.connections || 0), 0);
+    const dueNext = active.filter((a) => a.nextUpdate).sort((a, b) => a.nextUpdate - b.nextUpdate)[0];
+    const lateUpdates = active.filter((a) => a.nextUpdate && a.nextUpdate < now);
+    const STALE = 2 * 3600e3; // water point info older than this should be reconfirmed
+    const open = s.altWater.filter((p) => p.status === 'AVAILABLE' || p.status === 'LIMITED');
+    const stale = s.altWater.filter((p) => now - p.confirmedAt > STALE);
+    const inH = (ts) => {
+      const h = (ts - now) / 3600e3;
+      const v = Math.abs(h) >= 24 ? `${Math.round(Math.abs(h) / 24)}d` : Math.abs(h) >= 1 ? `${Math.round(Math.abs(h))}h` : `${Math.max(1, Math.round(Math.abs(h) * 60))}m`;
+      return h < 0 ? `${v} late` : `in ${v}`;
+    };
+    const kindDot = (a) => `<span class="sys-dot sys-dot--${a.kind === 'Water Quality' ? 'info' : 'warn'}" aria-hidden="true"></span>`;
+    const advCard = (a) => {
+      const late = a.nextUpdate && a.nextUpdate < now;
+      return `<article class="padv">
+        <div class="padv-h"><span class="padv-kind">${kindDot(a)}${esc(a.serviceStatus)}</span><span class="mono padv-id">${a.id}</span>${a.incidentId ? `<a class="mono padv-id" href="#/p/incidents/${a.incidentId}">${a.incidentId}</a>` : ''}
+          <span class="padv-due ${late ? 'is-late' : ''}">${a.nextUpdate ? `${late ? icon('alert', 12) : icon('clock', 12)} Next update ${inH(a.nextUpdate)}` : ''}</span></div>
+        <h3>${esc(a.title)}</h3><p>${esc(a.message)}</p>
+        <div class="padv-f">
+          <dl class="padv-meta"><div><dt>Areas</dt><dd>${a.areas.map((z) => zoneById(z).short).join(', ')}</dd></div><div><dt>Started</dt><dd>${fmtDateTime(a.startAt)}</dd></div><div><dt>Last update</dt><dd>${relTime(a.updatedAt)}</dd></div><div><dt>Est. restoration</dt><dd>${a.etr ? fmtDateTime(a.etr) : '<span class="muted">Not set</span>'}</dd></div></dl>
+          <div class="padv-a"><button class="btn btn--ghost btn--xs" data-action="adv-close" data-id="${a.id}">Mark resolved</button><button class="btn btn--outline btn--xs" data-action="adv-update" data-id="${a.id}">${icon('megaphone', 13)} Post update</button></div>
+        </div></article>`;
+    };
+    const awStatus = { AVAILABLE: 'Available', LIMITED: 'Limited', SCHEDULED: 'Scheduled', CLOSED: 'Closed' };
+    const awDot = { AVAILABLE: 'ok', LIMITED: 'warn', SCHEDULED: 'info', CLOSED: 'off' };
     return `<div class="page-h"><div><h1>Advisories</h1><p class="page-sub">Public service notices sent to residents in affected zones.</p></div><div class="page-a"><button class="btn btn--primary btn--sm" data-action="adv-new">${icon('plus', 15)} New advisory</button></div></div>
+      <div class="kgrid">
+        <section class="kp-primary">
+          <div class="kpi-top"><span class="kpi-label">Active Advisories</span>${src('MANUAL')}</div>
+          <div class="kp-main"><div><div class="kpi-value kpi-value--xl">${active.length}</div>
+            <div class="kpi-sub">${active.length ? `Reaching about <strong>${fmt(reach)}</strong> connections` : 'No notices currently shown to residents'}</div></div></div>
+          ${active.length ? `<ul class="adv-sum">${active.map((a) => `<li>${kindDot(a)}<span>${esc(a.title)}</span><span class="muted">${a.areas.map((z) => zoneById(z).short).join(', ')}</span></li>`).join('')}</ul>` : ''}
+          <div class="kp-foot"><span>${dueNext ? `Next resident update <strong class="mono">${dueNext.id}</strong> · ${fmtTime(dueNext.nextUpdate)}` : 'No updates scheduled'}</span><span class="kp-flag kp-flag--${lateUpdates.length ? 'warn' : 'ok'}">${lateUpdates.length ? `${lateUpdates.length} update${lateUpdates.length > 1 ? 's' : ''} late` : 'Updates on schedule'}</span></div>
+        </section>
+        ${kpi({ label: 'Zones affected', value: zones.length, sub: zones.length ? zones.map((z) => zoneById(z).short).join(', ') : 'All zones normal' })}
+        ${kpi({ label: 'Next update due', value: dueNext ? fmtTime(dueNext.nextUpdate) : '—', sub: dueNext ? (dueNext.nextUpdate < now ? `<span class="txt-warn">${inH(dueNext.nextUpdate)}</span>` : inH(dueNext.nextUpdate)) : 'Nothing scheduled', sev: lateUpdates.length ? 'warning' : null })}
+        ${kpi({ label: 'Water points open', value: `${open.length}<span class="kpi-unit">of ${s.altWater.length}</span>`, sub: 'Available or limited supply', source: 'MANUAL' })}
+        ${kpi({ label: 'Needs reconfirming', value: stale.length, sub: stale.length ? 'Not confirmed in 2 hours' : 'All recently confirmed', sev: stale.length ? 'warning' : null })}
+      </div>
       <div class="adv-grid"><div>
-        <h2 class="sec-t">Active (${active.length})</h2>${active.length ? active.map(advRow).join('') : empty('No active advisories', '', 'megaphone')}
-        <h2 class="sec-t">Resolved</h2>${past.map(advRow).join('') || empty('None', '', 'archive')}
+        <h2 class="sec-t">Active notices</h2>${active.length ? active.map(advCard).join('') : empty('No active advisories', 'Publish one from an incident or with New advisory.', 'megaphone')}
+        <h2 class="sec-t">Resolved</h2>${
+          past.length
+            ? `<div class="card adv-past">${past.map((a) => `<div class="adv-past-r"><span class="sys-dot sys-dot--ok" aria-hidden="true"></span><div><strong>${esc(a.title)}</strong><span>${esc(a.message)}</span></div><span class="mono padv-id">${a.id}</span><span class="adv-past-t">${a.areas.map((z) => zoneById(z).short).join(', ')} · ${relTime(a.updatedAt)}</span></div>`).join('')}</div>`
+            : empty('None', '', 'archive')
+        }
       </div>
       <div>${card(
         'Alternative water points',
-        `<p class="fine">Residents only see information you confirm here.</p>${s.altWater
-          .map(
-            (p) => `<div class="awp"><div><strong>${esc(p.name)}</strong><span class="muted sm">${esc(zoneById(p.zone).short)} · ${esc(p.hours)} · confirmed ${relTime(p.confirmedAt)}</span></div>
-          <div class="awp-a"><label class="sr-only" for="awp-${p.id}">Status for ${esc(p.name)}</label><select id="awp-${p.id}" data-change="awp-status" data-id="${p.id}">${['AVAILABLE', 'LIMITED', 'SCHEDULED', 'CLOSED'].map((x) => `<option ${x === p.status ? 'selected' : ''}>${x}</option>`).join('')}</select><button class="btn btn--outline btn--xs" data-action="awp-confirm" data-id="${p.id}">Confirm now</button></div></div>`
-          )
-          .join('')}`,
+        `${s.altWater
+          .map((p) => {
+            const old = now - p.confirmedAt > STALE;
+            return `<div class="awp">
+            <div class="awp-t"><strong>${esc(p.name)}</strong><span>${esc(zoneById(p.zone).short)} · ${esc(p.hours)}</span>
+              <span class="awp-c ${old ? 'is-old' : ''}">${old ? icon('alert', 12) : ''}Confirmed ${relTime(p.confirmedAt)}</span></div>
+            <div class="awp-a"><span class="sys-dot sys-dot--${awDot[p.status] || 'off'}" aria-hidden="true"></span><label class="sr-only" for="awp-${p.id}">Status for ${esc(p.name)}</label><select id="awp-${p.id}" data-change="awp-status" data-id="${p.id}">${Object.keys(awStatus).map((x) => `<option value="${x}" ${x === p.status ? 'selected' : ''}>${awStatus[x]}</option>`).join('')}</select><button class="btn btn--${old ? 'outline' : 'ghost'} btn--xs" data-action="awp-confirm" data-id="${p.id}">Confirm</button></div></div>`;
+          })
+          .join('')}<p class="fine awp-note">${icon('info', 13)} Residents only see what you confirm here.</p>`,
         { sub: 'Distribution points shown in the resident portal' }
       )}</div></div>`;
   },
@@ -426,54 +470,38 @@ const assetDetail = {
   },
 };
 
-// ---------------------------------------------------------------- MAINTENANCE
-const maintenance = {
-  title: 'Maintenance',
-  render() {
-    const s = st();
-    const now = Date.now();
-    const rows = s.assets
-      .map((a) => ({ ...a, due: a.nextMaint - now, wo: s.workOrders.find((w) => w.assetId === a.id && w.status !== 'Completed') }))
-      .sort((a, b) => a.due - b.due);
-    const overdue = rows.filter((r) => r.due < 0);
-    const soon = rows.filter((r) => r.due >= 0 && r.due < 14 * 864e5);
-    const prev = s.workOrders.filter((w) => !w.incidentId);
-    const recent = s.workOrders.filter((w) => w.status === 'Completed').sort((a, b) => b.completion.at - a.completion.at).slice(0, 5);
-    const stateOf = (r) => (r.due < 0 ? status('warning', 'Overdue') : r.due < 14 * 864e5 ? status('info', 'Due soon') : status('normal', 'Scheduled'));
-    return `<div class="page-h"><div><h1>Maintenance</h1><p class="page-sub">Preventive maintenance schedule and recent field activity.</p></div></div>
-      <div class="kpis kpis--3">${kpi({ label: 'Overdue maintenance', value: overdue.length, sub: 'assets past due date', sev: overdue.length ? 'warning' : null })}${kpi({ label: 'Due in 14 days', value: soon.length, sub: 'assets' })}${kpi({ label: 'Preventive work orders open', value: prev.filter((w) => w.status !== 'Completed').length, sub: 'not linked to incidents' })}</div>
-      ${card(
-        'Maintenance schedule',
-        table(
-          [
-            { label: 'Asset', render: (r) => `<strong class="mono">${r.id}</strong> ${esc(r.name)}` },
-            { label: 'Type', render: (r) => esc(r.type) },
-            { label: 'Last maintenance', render: (r) => fmtDate(r.lastMaint) },
-            { label: 'Next due', render: (r) => fmtDate(r.nextMaint) },
-            { label: 'State', render: stateOf },
-            { label: 'Work order', render: (r) => (r.wo ? `<a class="mono" href="#/p/work-orders/${r.wo.id}">${r.wo.id}</a> <span class="muted sm">${r.wo.status}</span>` : `<button class="btn btn--outline btn--xs" data-action="wo-new" data-asset="${r.id}" data-pri="Low" data-desc="Scheduled preventive maintenance for ${esc(r.name)}.">Schedule</button>`) },
-          ],
-          rows.slice(0, 14)
-        )
-      )}
-      ${card('Recently completed', table([{ label: 'Work order', render: (w) => `<strong class="mono">${w.id}</strong>` }, { label: 'Asset', render: (w) => `<span class="mono">${w.assetId}</span>` }, { label: 'Completed', render: (w) => fmtDateTime(w.completion.at) }, { label: 'Notes', render: (w) => esc(w.completion.notes) }], recent, { rowAction: { action: 'goto-wo', key: 'id' }, empty: 'None yet' }))}`;
-  },
-};
-
 // ---------------------------------------------------------------- ANALYTICS
 const analytics = {
   title: 'Analytics',
   regions: {
+    // One container per zone: current reading, 24 h range, time below alarm, and its own trend.
     pressure() {
-      const h = st().history;
-      const n = every(h.pressure.A, 3).length;
-      return lineChart({ id: 'an-press', label: 'Pressure by zone, last 24 hours', series: ZONES.map((z) => ({ name: z.short, color: ZONE_COLORS[z.id], values: every(h.pressure[z.id], 3), endLabel: true })), labels: Array.from({ length: n }, (_, i) => `${(((i - n + 1) * 15) / 60).toFixed(1)} h`), xTicks: hoursTicks(n), thresholds: [{ y: 26, label: 'Low-pressure alarm', color: '#D97706' }], yMin: 0, yFmt: (v) => `${Math.round(v)} PSI`, h: 240 });
+      const s = st();
+      const ALARM = 26;
+      const label = { normal: 'Normal', warning: 'Low pressure', critical: 'Very low', offline: 'No data' };
+      return `<div class="pz-grid">${ZONES.map((z) => {
+        const raw = s.history.pressure[z.id].filter((v) => v != null);
+        const vals = every(s.history.pressure[z.id], 3);
+        const n = vals.length;
+        const t = s.tele.zones[z.id];
+        const sev = t?.status || 'offline';
+        const lo = raw.length ? Math.min(...raw) : null;
+        const avg = raw.length ? raw.reduce((a, b) => a + b, 0) / raw.length : null;
+        const below = raw.filter((v) => v < ALARM).length * 5; // samples are 5 sim-minutes apart
+        return `<section class="pz">
+          <div class="pz-h"><div><strong>${esc(z.short)}</strong><span>${esc(z.name.split('— ')[1] || '')} · ${fmt(z.connections)} connections</span></div>
+            <span class="pz-st"><span class="sys-dot sys-dot--${SEV[sev].cls}" aria-hidden="true"></span>${label[sev]}</span></div>
+          <div class="pz-now"><span class="pz-v">${t ? fmt(t.pressure, 0) : '—'}</span><span class="pz-u">PSI now</span></div>
+          <div class="pz-chart">${lineChart({ id: `an-pz-${z.id}`, label: `${z.short} pressure, last 24 hours`, series: [{ name: z.short, color: '#1E3A5F', values: vals, area: true }], labels: Array.from({ length: n }, (_, i) => `${(((i - n + 1) * 15) / 60).toFixed(1)} h`), xTicks: hoursTicks(n, 12), thresholds: [{ y: ALARM, label: '', color: '#9AA6B4' }], yMin: 0, yMax: 60, yTickCount: 3, yFmt: (v) => `${Math.round(v)}`, h: 120, pad: { l: 28, r: 6, t: 8, b: 22 } })}</div>
+          <dl class="pz-meta"><div><dt>24 h low</dt><dd>${lo != null ? `${fmt(lo, 0)} PSI` : '—'}</dd></div><div><dt>24 h avg</dt><dd>${avg != null ? `${fmt(avg, 0)} PSI` : '—'}</dd></div><div><dt>Below ${ALARM} PSI</dt><dd>${below ? hoursLabel(below / 60) : 'None'}</dd></div></dl>
+        </section>`;
+      }).join('')}</div>`;
     },
   },
   render() {
     const s = st();
     const typeCounts = REPORT_TYPES.map((t) => ({ label: t.label.replace('Unusual ', ''), value: s.reports.filter((r) => r.type === t.id).length })).filter((b) => b.value);
-    const zoneCounts = ZONES.map((z) => ({ label: z.short, value: s.reports.filter((r) => r.zone === z.id).length, color: '#1D6FB8' }));
+    const zoneCounts = ZONES.map((z) => ({ label: z.short, value: s.reports.filter((r) => r.zone === z.id).length, color: '#1E3A5F' }));
     const verified = s.reports.filter((r) => r.residentResponse);
     const restored = verified.filter((r) => r.residentResponse.restored).length;
     const linked = s.reports.filter((r) => r.incidentId).length;
@@ -485,13 +513,16 @@ const analytics = {
         ${kpi({ label: 'Resident-verified restorations', value: verified.length ? `${restored}/${verified.length}` : '—', sub: 'confirmed restored / responses', source: 'RESIDENT REPORTED' })}
         ${kpi({ label: 'Estimated losses (NRW)', value: fmt(nrw, 1), unit: '%', sub: 'of current demand', source: 'ESTIMATED', sev: nrw > 15 ? 'warning' : null })}
       </div>
-      ${card('Pressure by zone', `<div data-region="pressure">${this.regions.pressure()}</div>`, { sub: 'Last 24 simulated hours · SIMULATED telemetry' })}
-      <div class="ops-grid">
-        ${card('Reports by problem type', barChart({ id: 'an-types', label: 'Resident reports by problem type', bars: typeCounts.map((b) => ({ ...b, color: '#1D6FB8', showValue: true })), h: 220 }))}
-        ${card('Reports by zone', barChart({ id: 'an-zones', label: 'Resident reports by zone', bars: zoneCounts.map((b) => ({ ...b, showValue: true })), h: 220 }))}
+      <div class="an-sec"><div><h2>Pressure by zone</h2><p>Last 24 simulated hours · dashed line marks the ${26} PSI low-pressure alarm</p></div>${src('SIMULATED')}</div>
+      <div data-region="pressure">${this.regions.pressure()}</div>
+      <div class="an-sec"><div><h2>Resident reports</h2><p>What residents report, and where</p></div>${src('RESIDENT REPORTED')}</div>
+      <div class="ops-grid ops-grid--eq an-reports">
+        ${card('By problem type', barChart({ id: 'an-types', label: 'Resident reports by problem type', bars: typeCounts.map((b) => ({ ...b, color: '#1E3A5F', showValue: true })), h: 220 }))}
+        ${card('By zone', barChart({ id: 'an-zones', label: 'Resident reports by zone', bars: zoneCounts.map((b) => ({ ...b, showValue: true })), h: 220 }))}
       </div>
+      <div class="an-sec"><div><h2>Incident response</h2><p>How quickly incidents get a work order and are resolved</p></div></div>
       ${card(
-        'Incident response',
+        '',
         table(
           [
             { label: 'Incident', render: (i) => `<strong class="mono">${i.id}</strong> ${esc(i.title)}` },
@@ -513,10 +544,10 @@ export const providerViews = {
   operations,
   ...incidentViews,
   ...forecastViews,
+  ...safetyViews,
   advisories,
   assets,
   'assets/:id': assetDetail,
-  maintenance,
   analytics,
   notifications,
 };

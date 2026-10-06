@@ -23,10 +23,17 @@ function historyAndForecast(fc, id, { h = 260, forecastSeries } = {}) {
     { name: 'Forecast storage', color: '#5B7BA3', values: fcVals, dash: true, endLabel: true },
   ];
   if (forecastSeries) series.push(forecastSeries(hist.length));
+  // Likely range from past forecast errors (90% of scored forecasts fell inside it).
+  const band = S.forecastBand();
+  const ranges = band
+    ? [{ name: 'Likely range (90% of past errors)', color: '#5B7BA3', opacity: 0.16, lo: [...hist.map((v, i) => (i === hist.length - 1 ? v * 100 : null)), ...fpts.map((p) => p.pct * 100 - band(p.h))], hi: [...hist.map((v, i) => (i === hist.length - 1 ? v * 100 : null)), ...fpts.map((p) => p.pct * 100 + band(p.h))] }]
+    : [];
   return lineChart({
     id,
     label: 'Reservoir storage: past 24 hours and 48-hour forecast',
     series,
+    ranges,
+    legend: true,
     labels,
     xTicks: [
       { i: 0, label: '−24 h' },
@@ -49,12 +56,16 @@ function historyAndForecast(fc, id, { h = 260, forecastSeries } = {}) {
 const sentence = (t) => t.charAt(0) + t.slice(1).toLowerCase();
 const dot = (cls) => `<span class="sys-dot sys-dot--${cls}" aria-hidden="true"></span>`;
 const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v), 0)}%`;
+const signedC = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmt(Math.abs(v), 1)} °C`;
 const dayName = (date, i) => (i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long' }));
 
 // Plain-language weather effects; shared by the weather card and "why" list.
 function weatherEffects() {
   const imp = dayImpacts();
   if (!imp.length) return null;
+  const { climate } = weatherState();
+  const base = climate?.normalTmax ?? WEATHER_BASE.tmax;
+  const baseTxt = climate ? `${fmt(base, 1)} °C ${climate.monthName} normal` : `${WEATHER_BASE.tmax} °C typical maximum`;
   const hot = imp.reduce((a, b) => (b.demandPct > a.demandPct ? b : a));
   const wet = imp.filter((x) => x.rainNote === 'heavy' || x.rainNote === 'moderate').sort((a, b) => b.rain - a.rain)[0];
   const dry = imp.every((x) => x.rainNote === 'dry');
@@ -62,13 +73,13 @@ function weatherEffects() {
   const day = (x) => dayName(x.date, imp.indexOf(x));
   const demand =
     hot.demandPct > 0.5
-      ? { sev: 'warn', label: 'Water demand', value: signed(hot.demandPct), text: `${day(hot)}: high of ${fmt(hot.tmax, 0)} °C, above the ${WEATHER_BASE.tmax} °C typical maximum`, reason: `Hot weather (${day(hot).toLowerCase()}, ${fmt(hot.tmax, 0)} °C) may raise demand by about ${fmt(hot.demandPct, 0)}%` }
-      : { sev: 'off', label: 'Water demand', value: 'No change', text: `Temperatures near normal (highs up to ${fmt(Math.max(...imp.map((x) => x.tmax)), 0)} °C)` };
+      ? { sev: 'warn', label: 'Water demand', value: signed(hot.demandPct), text: `${day(hot)}: high of ${fmt(hot.tmax, 0)} °C, above the ${baseTxt}`, reason: `Hot weather (${day(hot).toLowerCase()}, ${fmt(hot.tmax, 0)} °C) may raise demand by about ${fmt(hot.demandPct, 0)}%` }
+      : { sev: 'off', label: 'Water demand', value: 'No change', text: `Highs up to ${fmt(Math.max(...imp.map((x) => x.tmax)), 0)} °C, near the ${baseTxt}` };
   const supply = wet
     ? { sev: wet.rainNote === 'heavy' ? 'crit' : 'warn', label: 'Treatment output', value: signed(wet.supplyPct), text: `${day(wet)}: ${fmt(wet.rain, 0)} mm of rain — muddier river intake slows treatment`, reason: `Rain ${day(wet).toLowerCase()} (${fmt(wet.rain, 0)} mm) may reduce treatment output by about ${fmt(-wet.supplyPct, 0)}% while the intake water is muddy` }
     : dry
-      ? { sev: 'warn', label: 'River inflow', value: signed(-6), text: `Under ${WEATHER_BASE.dryTotalMm} mm of rain expected in 3 days — river flow drops`, reason: `A dry spell (under ${WEATHER_BASE.dryTotalMm} mm of rain in 3 days) may reduce river inflow by about 6%` }
-      : { sev: 'off', label: 'River inflow', value: 'No change', text: 'Rainfall within normal range for the intake' };
+      ? { sev: 'warn', label: 'River inflow', value: signed(-6), text: climate ? `Only ${fmt(climate.pctOfNormal, 0)}% of normal rain in 30 days and little ahead — river flow drops` : `Under ${WEATHER_BASE.dryTotalMm} mm of rain expected in 3 days — river flow drops`, reason: climate ? `A dry spell (${fmt(climate.pctOfNormal, 0)}% of normal rain over 30 days) may reduce river inflow by about 6%` : `A dry spell (under ${WEATHER_BASE.dryTotalMm} mm of rain in 3 days) may reduce river inflow by about 6%` }
+      : { sev: 'off', label: 'River inflow', value: 'No change', text: climate ? `Last 30 days: ${fmt(climate.rain30, 0)} mm of rain (${fmt(climate.pctOfNormal, 0)}% of normal)` : 'Rainfall within normal range for the intake' };
   const wind =
     (gust.gust || 0) >= WEATHER_BASE.gustRiskKmh
       ? { sev: 'crit', label: 'Storm risk', value: `${fmt(gust.gust, 0)} km/h`, text: `${day(gust)}: strong gusts — check standby power at pump stations`, reason: `Strong gusts up to ${fmt(gust.gust, 0)} km/h ${day(gust).toLowerCase()} could interrupt power to pump stations` }
@@ -84,8 +95,11 @@ function weatherCard() {
   const now = wxDescribe(c.weather_code);
   const d = data.daily;
   const fx = weatherEffects();
-  const rain = data.hourly.precipitation.slice(new Date().getHours(), new Date().getHours() + 48);
-  const rainTimes = data.hourly.time.slice(new Date().getHours(), new Date().getHours() + 48);
+  const { climate } = weatherState();
+  // Start at the current hour in Catbalogan time (the API returns local hours from midnight).
+  const h0 = Math.max(0, data.hourly.time.indexOf(c.time.slice(0, 13) + ':00'));
+  const rain = data.hourly.precipitation.slice(h0, h0 + 48);
+  const rainTimes = data.hourly.time.slice(h0, h0 + 48);
   return card(
     'Weather & climate outlook',
     `<div class="wx">
@@ -103,9 +117,14 @@ function weatherCard() {
         <ul>${fx.map((x) => `<li>${dot(x.sev)}<div><div class="wx-fx-l">${x.label}<strong>${x.value}</strong></div><div class="wx-fx-t">${esc(x.text)}</div></div></li>`).join('')}</ul>
       </div>
     </div>
+    ${climate ? `<div class="wx-clim"><div class="wx-fx-h"><span>Climate for ${climate.monthName}</span>${src('CLIMATE RECORD')}</div>
+      <dl><div><dt>Normal daily high</dt><dd>${fmt(climate.normalTmax, 1)} °C</dd><span>${climate.years} average</span></div>
+      <div><dt>Today's forecast high</dt><dd>${fmt(d.temperature_2m_max[0], 0)} °C</dd><span>${signedC(d.temperature_2m_max[0] - climate.normalTmax)} vs normal</span></div>
+      <div><dt>Rain, last 30 days</dt><dd>${fmt(climate.rain30, 0)} mm</dd><span>Normal ${fmt(climate.normalRain30, 0)} mm</span></div>
+      <div><dt>Versus normal</dt><dd>${fmt(climate.pctOfNormal, 0)}%</dd><span>${climate.pctOfNormal < 50 ? 'Dry' : climate.pctOfNormal > 150 ? 'Wetter than usual' : 'Near normal'}</span></div></dl></div>` : ''}
     <div class="wx-rain">${barChart({ id: 'wx-rain', label: 'Rainfall, next 48 hours, millimetres per hour', bars: rain.map((v, i) => ({ label: i % 12 === 0 ? new Date(rainTimes[i]).toLocaleTimeString('en-US', { weekday: 'short', hour: 'numeric' }) : '', value: v || 0, color: '#8A9BB0', tip: `${new Date(rainTimes[i]).toLocaleString('en-US', { weekday: 'short', hour: 'numeric' })} · ${fmt(v || 0, 1)} mm` })), yFmt: (v) => `${fmt(v, 1)}`, h: 110, yMax: Math.max(2, ...rain.map((v) => v || 0)) })}
       <div class="chart-cap">Rainfall, next 48 hours (mm per hour) ${src('FORECAST')}</div></div>`,
-    { sub: `Catbalogan City · Open-Meteo forecast · updated ${fmtTime(data.fetchedAt)}`, actions: src('FORECAST') }
+    { sub: `Catbalogan City · Open-Meteo forecast${climate ? ' and ERA5 climate record' : ''} · updated ${fmtTime(data.fetchedAt)}`, actions: src('FORECAST') }
   );
 }
 
@@ -151,7 +170,8 @@ function forecastMain() {
     )}
   </div>
   ${weatherCard()}
-  ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: 'Central Reservoir level · past 24 h (simulated telemetry) and next 48 h (forecast)' })}
+  ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Central Reservoir level · past 24 h (simulated telemetry) and next 48 h (forecast)${S.forecastBand() ? ' · shaded area shows the likely range from past forecast errors' : ''}` })}
+  ${accuracyCard()}
   ${card(
     'Forecast inputs',
     `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Input</th><th class="num">Value</th><th>Source</th><th>Notes</th></tr></thead><tbody>
@@ -161,12 +181,71 @@ function forecastMain() {
       <tr><td>Consumption history (24 h avg)</td><td class="num">${fmt(hist24, 2)} ML/day</td><td>${src('SIMULATED')}</td><td class="muted">From outlet flow meter</td></tr>
       <tr><td>Current demand</td><td class="num">${fmt(t.demand, 2)} ML/day</td><td>${src('SIMULATED')}</td><td class="muted">Instantaneous rate incl. estimated losses</td></tr>
       <tr><td>Estimated demand (next 24 h avg)</td><td class="num">${fmt(fc.avgDemand, 2)} ML/day</td><td>${src('ESTIMATED')}</td><td class="muted">Daily demand pattern × current demand factor${imp ? ' × weather' : ''}</td></tr>
-      <tr><td>Weather: demand adjustment (today)</td><td class="num">${imp ? signed(imp.demandPct) : '—'}</td><td>${src('ESTIMATED')}</td><td class="muted">+${WEATHER_BASE.hotPctPerDeg}% per °C above a ${WEATHER_BASE.tmax} °C daily high (Open-Meteo forecast)</td></tr>
-      <tr><td>Weather: supply adjustment (today)</td><td class="num">${imp ? signed(imp.supplyPct) : '—'}</td><td>${src('ESTIMATED')}</td><td class="muted">−15% at ≥${WEATHER_BASE.heavyRainMm} mm/day rain, −5% at ≥${WEATHER_BASE.moderateRainMm} mm, −6% in a dry spell</td></tr>
+      <tr><td>Weather: demand adjustment (today)</td><td class="num">${imp ? signed(imp.demandPct) : '—'}</td><td>${src('ESTIMATED')}</td><td class="muted">+${WEATHER_BASE.hotPctPerDeg}% per °C above ${weatherState().climate ? `the ${fmt(weatherState().climate.normalTmax, 1)} °C climate normal (ERA5 ${weatherState().climate.years})` : `a ${WEATHER_BASE.tmax} °C daily high`} (Open-Meteo forecast)</td></tr>
+      <tr><td>Weather: supply adjustment (today)</td><td class="num">${imp ? signed(imp.supplyPct) : '—'}</td><td>${src('ESTIMATED')}</td><td class="muted">−15% at ≥${WEATHER_BASE.heavyRainMm} mm/day rain, −5% at ≥${WEATHER_BASE.moderateRainMm} mm, −6% in a dry spell${weatherState().climate ? ` (under ${WEATHER_BASE.dryPctOfNormal}% of normal 30-day rain)` : ''}</td></tr>
       <tr><td>Reserve threshold</td><td class="num">30% (0.60 ML)</td><td>${src('MANUAL')}</td><td class="muted">Operating policy</td></tr>
     </tbody></table></div><p class="fine">Model: mass balance (storage + production − estimated demand) in 15-minute steps over 72 hours, adjusted by the daily weather outlook. Updated with every telemetry update.</p>`
   )}`;
 }
+
+// ---------------------------------------------------------------- forecast accuracy
+let fcaH = 6;
+const horizonLabel = (h) => `${h} hour${h > 1 ? 's' : ''} ahead`;
+const pts = (v, d = 1) => (v == null ? '—' : `${fmt(v, d)} pts`);
+
+function accuracyCard() {
+  const s = st();
+  const acc = S.forecastAccuracy();
+  const scored = acc.reduce((n, a) => n + a.n, 0);
+  const pending = acc.reduce((n, a) => n + a.pending, 0);
+  const tile = (a) => {
+    const ok = a.n >= S.FC_MIN_SAMPLES ? a.mae <= a.target : null;
+    return `<button class="fca-t ${a.h === fcaH ? 'is-on' : ''}" data-action="fca-h" data-h="${a.h}" aria-pressed="${a.h === fcaH}">
+      <span class="fca-h">${horizonLabel(a.h)}</span>
+      <span class="fca-v">${a.mae == null ? '—' : `±${fmt(a.mae, 1)}`}<small>${a.mae == null ? '' : 'pts avg error'}</small></span>
+      <span class="fca-s">${ok == null ? `${dot('off')}${a.n < S.FC_MIN_SAMPLES ? `Collecting · ${a.n}/${S.FC_MIN_SAMPLES} checks` : ''}` : `${dot(ok ? 'ok' : 'warn')}${ok ? 'Within' : 'Outside'} target of ±${a.target} pts`}</span>
+      <dl><div><dt>Within target</dt><dd>${a.withinPct == null ? '—' : `${fmt(a.withinPct, 0)}%`}</dd></div><div><dt>Bias</dt><dd>${a.bias == null ? '—' : `${a.bias > 0 ? '+' : a.bias < 0 ? '−' : ''}${fmt(Math.abs(a.bias), 1)}`}</dd></div><div><dt>Demand error</dt><dd>${a.mape == null ? '—' : `${fmt(a.mape, 1)}%`}</dd></div><div><dt>Checks</dt><dd>${a.n}</dd></div></dl>
+    </button>`;
+  };
+  const sel = (s.fcLog || []).filter((e) => e.h === fcaH && e.actual != null).slice(-48);
+  const chart = sel.length >= 2
+    ? lineChart({
+        id: 'fca-chart',
+        label: `Forecast made ${horizonLabel(fcaH)} versus measured storage`,
+        series: [
+          { name: 'Measured storage (simulated)', color: '#1E3A5F', values: sel.map((e) => e.actual * 100) },
+          { name: `Forecast made ${fcaH} h earlier`, color: '#8A9BB0', values: sel.map((e) => e.pred * 100), dash: true },
+        ],
+        labels: sel.map((e) => fmtTime(e.target)),
+        xTicks: [{ i: 0, label: fmtTime(sel[0].target) }, { i: sel.length - 1, label: fmtTime(sel[sel.length - 1].target) }],
+        yFmt: (v) => `${fmt(v, 1)}%`,
+        h: 200,
+      })
+    : `<div class="fca-empty">${icon('clock', 18)}<span>The first comparisons appear once forecasts made ${horizonLabel(fcaH)} reach their target time. Forecasts are logged every 30 simulated minutes (about every 18 seconds), so 1-hour checks arrive within a minute, 6-hour checks in about 4 minutes and 24-hour checks in about 15 minutes.</span></div>`;
+  const recent = (s.fcLog || []).filter((e) => e.actual != null).slice(-6).reverse();
+  return card(
+    'Forecast accuracy',
+    `<div class="fca-tiles">${acc.map(tile).join('')}</div>
+    <div class="fca-chart"><div class="fca-ch-h"><strong>Forecast vs measured · ${horizonLabel(fcaH)}</strong><span>Last ${sel.length} checks</span></div>${chart}</div>
+    ${recent.length ? `<div class="tbl-wrap"><table class="tbl fca-tbl"><thead><tr><th>Forecast made</th><th>Horizon</th><th class="num">Predicted</th><th class="num">Measured</th><th class="num">Error</th><th>Result</th></tr></thead><tbody>${recent
+      .map((e) => {
+        const err = (e.pred - e.actual) * 100;
+        const ok = Math.abs(err) <= S.FC_TARGETS.level[e.h];
+        return `<tr><td>${fmtTime(e.made)}</td><td>+${e.h} h</td><td class="num">${fmt(e.pred * 100, 1)}%</td><td class="num">${fmt(e.actual * 100, 1)}%</td><td class="num">${err > 0 ? '+' : err < 0 ? '−' : ''}${fmt(Math.abs(err), 1)} pts</td><td><span class="fca-r">${dot(ok ? 'ok' : 'warn')}${ok ? 'Within target' : 'Outside target'}</span></td></tr>`;
+      })
+      .join('')}</tbody></table></div>` : ''}
+    <p class="fine">Each forecast is saved and later compared with the measured reservoir level. Error is in percentage points of storage; demand error is the average percentage difference. Targets (±${S.FC_TARGETS.level[1]} / ±${S.FC_TARGETS.level[6]} / ±${S.FC_TARGETS.level[24]} pts) are proposed and should be agreed with the utility. <strong>Measured values here come from simulated telemetry</strong>, so these scores show how the method works; they become a real accuracy measure once meter data is connected.</p>`,
+    { sub: `${scored} forecasts scored · ${pending} waiting for their target time`, actions: src('SIMULATED') }
+  );
+}
+
+register({
+  'fca-h': (el) => {
+    fcaH = +el.dataset.h;
+    const r = document.querySelector('[data-region="main"]');
+    if (r) r.innerHTML = forecastMain();
+  },
+});
 
 const forecastView = {
   title: 'Forecast',

@@ -8,6 +8,7 @@ import { syncMaps } from './livemap.js';
 import { esc, relTime, fmtDateTime, toXY } from './util.js';
 import { residentViews } from './views/resident.js';
 import { providerViews } from './views/provider.js';
+import { setWoFilter } from './views/provider-incidents.js';
 
 S.load();
 installDelegation();
@@ -43,6 +44,7 @@ const PRO_NAV = [
   { group: 'Monitor', items: [
     { id: 'overview', label: 'Overview', icon: 'grid' },
     { id: 'operations', label: 'Operations', icon: 'activity' },
+    { id: 'water-safety', label: 'Water Safety', icon: 'shield' },
     { id: 'forecast', label: 'Forecast', icon: 'forecast' },
     { id: 'simulator', label: 'Response Simulator', icon: 'sliders' },
   ] },
@@ -53,7 +55,6 @@ const PRO_NAV = [
   ] },
   { group: 'Infrastructure', items: [
     { id: 'assets', label: 'Assets', icon: 'database' },
-    { id: 'maintenance', label: 'Maintenance', icon: 'calendar' },
     { id: 'analytics', label: 'Analytics', icon: 'trend' },
   ] },
 ];
@@ -75,6 +76,8 @@ function render() {
   if (!role || area === 'login' || !area) return renderLogin();
   if (area === 'r' && role !== 'resident') return go(`#/p/overview`);
   if (area === 'p' && role !== 'provider') return go(`#/r/home`);
+  // Maintenance now lives inside Work Orders; keep old links working.
+  if (area === 'p' && page === 'maintenance') return setWoFilter('maintenance'), go('#/p/work-orders');
   const views = area === 'r' ? residentViews : providerViews;
   const pg = page || (area === 'r' ? 'home' : 'overview');
   const view = views[id && views[`${pg}/:id`] ? `${pg}/:id` : pg] || views[area === 'r' ? 'home' : 'overview'];
@@ -408,7 +411,7 @@ function renderProviderShell(page, view, html) {
     <a class="skip" href="#view">Skip to content</a>
     <aside class="sb" id="sidebar" aria-label="Provider navigation">
       <div class="sb-top">
-        <a href="#/p/overview" class="sb-logo" aria-label="SAMAR-AGOS overview">${logoMark(32)}<span class="sb-brand"><strong>SAMAR-AGOS</strong><span>Water Operations</span></span></a>
+        <a href="#/p/overview" class="sb-logo" aria-label="SAMAR-AGOS overview">${logoMark(36)}<span class="sb-brand"><strong>SAMAR-AGOS</strong><span>Water Operations</span></span></a>
         <div class="sb-scene">${cityScene()}</div>
       </div>
       <nav class="sb-nav">

@@ -57,6 +57,7 @@ export function lineChart(o) {
   const n = Math.max(...o.series.map((s) => s.values.length));
   const all = o.series.flatMap((s) => s.values.filter((v) => v != null));
   (o.thresholds || []).forEach((t) => all.push(t.y));
+  (o.ranges || []).forEach((r) => all.push(...r.lo.filter((v) => v != null), ...r.hi.filter((v) => v != null)));
   let yMin = o.yMin ?? Math.min(...all);
   let yMax = o.yMax ?? Math.max(...all);
   if (o.yMin == null) yMin -= (yMax - yMin) * 0.08;
@@ -103,6 +104,14 @@ export function lineChart(o) {
     svg += `<line x1="${x(o.nowIndex)}" x2="${x(o.nowIndex)}" y1="${pad.t}" y2="${h - pad.b}" stroke="#94A3B8" stroke-width="1"/>`;
     svg += `<text x="${x(o.nowIndex) + 4}" y="${h - pad.b - 6}" class="ch-band">Now</text>`;
   }
+  // Shaded ranges (e.g. forecast uncertainty): polygon between hi and lo where both exist.
+  (o.ranges || []).forEach((r) => {
+    const idx = r.lo.map((v, i) => (v == null || r.hi[i] == null ? null : i)).filter((i) => i != null);
+    if (idx.length < 2) return;
+    const clampY = (v) => y(Math.max(yMin, Math.min(yMax, v)));
+    const d = idx.map((i, k) => `${k ? 'L' : 'M'}${x(i).toFixed(1)},${clampY(r.hi[i]).toFixed(1)}`).join('') + [...idx].reverse().map((i) => `L${x(i).toFixed(1)},${clampY(r.lo[i]).toFixed(1)}`).join('') + 'Z';
+    svg += `<path d="${d}" fill="${r.color || '#5B7BA3'}" opacity="${r.opacity ?? 0.16}"/>`;
+  });
   o.series.forEach((s) => {
     if (s.area) svg += `<path d="${area(s.values)}" fill="${s.color}" opacity="0.09"/>`;
   });
@@ -121,7 +130,7 @@ export function lineChart(o) {
 
   const legend =
     o.series.length > 1 || o.legend
-      ? `<div class="ch-legend">${o.series.map((s) => `<span><i style="background:${s.color};${s.dash ? 'background:repeating-linear-gradient(90deg,' + s.color + ' 0 5px,transparent 5px 8px)' : ''}"></i>${esc(s.name)}</span>`).join('')}${(o.thresholds || []).map((t) => `<span><i class="thr" style="border-color:${t.color || '#C0262D'}"></i>${esc(t.label)}</span>`).join('')}</div>`
+      ? `<div class="ch-legend">${o.series.map((s) => `<span><i style="background:${s.color};${s.dash ? 'background:repeating-linear-gradient(90deg,' + s.color + ' 0 5px,transparent 5px 8px)' : ''}"></i>${esc(s.name)}</span>`).join('')}${(o.ranges || []).filter((r) => r.name).map((r) => `<span><i style="background:${r.color || '#5B7BA3'};opacity:${Math.min(1, (r.opacity ?? 0.16) * 2.5)}"></i>${esc(r.name)}</span>`).join('')}${(o.thresholds || []).map((t) => `<span><i class="thr" style="border-color:${t.color || '#C0262D'}"></i>${esc(t.label)}</span>`).join('')}</div>`
       : '';
   return `<div class="chart" data-chart-wrap="${id}">${legend}${svg}<div class="ch-tip" hidden></div>${srTable(o)}</div>`;
 }

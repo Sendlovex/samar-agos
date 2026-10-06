@@ -155,7 +155,7 @@ function writable(coll, item) {
 }
 
 function controlOf(s) {
-  return { scenario: s.scenario, activeScenarios: s.activeScenarios, factors: s.factors, zoneIssues: s.zoneIssues, pumpsOffline: s.pumpsOffline, emergencyActive: !!s.emergency.active, volOverride: s.volOverride || null, scenarioLog: (s.scenarioLog || []).slice(0, 20) };
+  return { scenario: s.scenario, activeScenarios: s.activeScenarios, factors: s.factors, zoneIssues: s.zoneIssues, pumpsOffline: s.pumpsOffline, emergencyActive: !!s.emergency.active, volOverride: s.volOverride || null, wqMode: s.wq?.mode || 'safe', wqAt: s.wq?.at || 0, scenarioLog: (s.scenarioLog || []).slice(0, 20) };
 }
 function publicOf(s) {
   const pending = {};

@@ -384,6 +384,47 @@ register({
 
 // ---------------------------------------------------------------- WORK ORDERS
 let woFilter = 'open';
+export const setWoFilter = (f) => (woFilter = f);
+
+function woProgress(w) {
+  const i = WO_STEPS.indexOf(w.status);
+  const late = w.status !== 'Completed' && w.target < Date.now();
+  return `<div class="wo-prog ${late ? 'is-late' : ''} ${w.status === 'Completed' ? 'is-done' : ''}">
+    <div class="wo-prog-t"><strong>${w.status}</strong><span>${i + 1}/${WO_STEPS.length}</span></div>
+    <div class="wo-prog-b" aria-hidden="true">${WO_STEPS.map((_, k) => `<span class="${k <= i ? 'on' : ''}"></span>`).join('')}</div>
+  </div>`;
+}
+
+function maintTable(rows) {
+  const day = 864e5;
+  const when = (r) => {
+    const d = Math.round(Math.abs(r.due) / day);
+    if (r.due < 0) return `<div class="wo-due is-late"><span>${fmtDate(r.nextMaint)}</span><small>${icon('alert', 12)} Overdue ${d || 1}d</small></div>`;
+    return `<div class="wo-due ${r.due < 14 * day ? 'is-soon' : ''}"><span>${fmtDate(r.nextMaint)}</span><small>${d ? `in ${d}d` : 'today'}</small></div>`;
+  };
+  const state = (r) => `<span class="mt-state"><span class="sys-dot sys-dot--${r.due < 0 ? 'warn' : r.due < 14 * day ? 'info' : 'ok'}" aria-hidden="true"></span>${r.due < 0 ? 'Overdue' : r.due < 14 * day ? 'Due soon' : 'Scheduled'}</span>`;
+  return `<div class="card wo-list">${table(
+    [
+      { label: 'Asset', render: (r) => `<div class="wo-id"><strong class="mono">${r.id}</strong><span>${esc(r.type)}</span></div>` },
+      { label: 'Name', render: (r) => `<div class="wo-task">${esc(r.name)}</div>` },
+      { label: 'Last serviced', render: (r) => `<span class="muted">${fmtDate(r.lastMaint)}</span>` },
+      { label: 'Next due', render: when },
+      { label: 'State', render: state },
+      { label: 'Work order', render: (r) => (r.wo ? `<a class="mono" href="#/p/work-orders/${r.wo.id}">${r.wo.id}</a> <span class="muted sm">${r.wo.status}</span>` : `<button class="btn btn--outline btn--xs" data-action="wo-new" data-asset="${r.id}" data-pri="Low" data-desc="Scheduled preventive maintenance for ${esc(r.name)}.">${icon('plus', 13)} Schedule</button>`) },
+    ],
+    rows,
+    { empty: 'No assets on the maintenance schedule' }
+  )}</div>`;
+}
+
+function woTarget(w, now) {
+  if (w.status === 'Completed') return `<div class="wo-due"><span>${fmtDateTime(w.target)}</span><small>Completed</small></div>`;
+  const h = (w.target - now) / 3600e3;
+  const span = (x) => (Math.abs(x) >= 24 ? `${Math.round(Math.abs(x) / 24)}d` : `${Math.max(1, Math.round(Math.abs(x)))}h`);
+  return h < 0
+    ? `<div class="wo-due is-late"><span>${fmtDateTime(w.target)}</span><small>${icon('alert', 12)} Overdue ${span(h)}</small></div>`
+    : `<div class="wo-due ${h < 24 ? 'is-soon' : ''}"><span>${fmtDateTime(w.target)}</span><small>in ${span(h)}</small></div>`;
+}
 const workOrders = {
   title: 'Work Orders',
   render() {
@@ -392,28 +433,55 @@ const workOrders = {
     const open = all.filter((w) => w.status !== 'Completed');
     const overdue = open.filter((w) => w.target < Date.now());
     const lists = { open, overdue, completed: all.filter((w) => w.status === 'Completed'), all };
-    const list = lists[woFilter];
-    const byStatus = WO_STEPS.map((x) => ({ x, n: all.filter((w) => w.status === x).length }));
+    const list = lists[woFilter] || [];
+    const now = Date.now();
+    const done = lists.completed;
+    const dueSoon = open.filter((w) => w.target >= now && w.target < now + 24 * 3600e3);
+    const urgent = open.filter((w) => w.priority === 'High' || w.priority === 'Critical');
+    // Preventive maintenance schedule (formerly its own page): assets by next due date.
+    const maint = s.assets
+      .map((a) => ({ ...a, due: a.nextMaint - now, wo: all.find((w) => w.assetId === a.id && w.status !== 'Completed') }))
+      .sort((a, b) => a.due - b.due);
+    const maintLate = maint.filter((r) => r.due < 0);
+    const maintSoon = maint.filter((r) => r.due >= 0 && r.due < 14 * 864e5);
+    const next = [...open].sort((a, b) => a.target - b.target)[0];
+    // Stage counts for the open pipeline (Completed is shown separately).
+    const stages = WO_STEPS.filter((x) => x !== 'Completed').map((x) => ({ x, n: open.filter((w) => w.status === x).length }));
+    const flag = overdue.length ? ['warn', `${overdue.length} overdue`] : ['ok', 'On schedule'];
+    const rank = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+    // Most pressing first: overdue, then priority, then nearest target.
+    const sorted = [...list].sort((a, b) => {
+      const oa = a.status !== 'Completed' && a.target < now, ob = b.status !== 'Completed' && b.target < now;
+      return ob - oa || (rank[a.priority] ?? 9) - (rank[b.priority] ?? 9) || a.target - b.target;
+    });
     return `<div class="page-h"><div><h1>Work Orders</h1><p class="page-sub">Field response workflow — from assignment to verified repair.</p></div><div class="page-a"><button class="btn btn--primary btn--sm" data-action="wo-new">${icon('plus', 15)} New work order</button></div></div>
-      <div class="wo-pipe">${byStatus.map((b) => `<div class="wo-pipe-i ${b.n ? '' : 'is-zero'}"><span>${b.x}</span><strong>${b.n}</strong></div>`).join('')}</div>
-      ${tabs([{ id: 'open', label: 'Open', count: open.length }, { id: 'overdue', label: 'Overdue', count: overdue.length }, { id: 'completed', label: 'Completed', count: lists.completed.length }, { id: 'all', label: 'All', count: all.length }], woFilter, 'wo-tab')}
-      ${card(
-        '',
-        table(
-          [
-            { label: 'Work order', render: (w) => `<strong class="mono">${w.id}</strong>` },
-            { label: 'Description', render: (w) => `<div class="clamp2">${esc(w.description)}</div>` },
-            { label: 'Incident', render: (w) => (w.incidentId ? `<span class="mono">${w.incidentId}</span>` : '<span class="muted">Preventive</span>') },
-            { label: 'Asset', render: (w) => `<span class="mono">${w.assetId}</span>` },
-            { label: 'Priority', render: (w) => priorityBadge(w.priority) },
-            { label: 'Team', render: (w) => esc(w.team || '—') },
-            { label: 'Status', render: (w) => woStatusBadge(w) },
-            { label: 'Target', render: (w) => `<span class="${w.status !== 'Completed' && w.target < Date.now() ? 'txt-warn' : ''}">${fmtDateTime(w.target)}</span>` },
-          ],
-          list,
-          { rowAction: { action: 'goto-wo', key: 'id' }, empty: 'No work orders in this view' }
-        )
-      )}`;
+      <div class="kgrid">
+        <section class="kp-primary">
+          <div class="kpi-top"><span class="kpi-label">Open Work Orders</span>${src('FIELD')}</div>
+          <div class="kp-main"><div><div class="kpi-value kpi-value--xl">${open.length}</div>
+            <div class="kpi-sub">${done.length} completed · ${all.length} total</div></div></div>
+          <div class="wo-bar" role="img" aria-label="Open work orders by stage">${stages.filter((b) => b.n).map((b, k) => `<span class="wo-bar-s wo-bar-s--${k}" style="flex:${b.n}" title="${b.x}: ${b.n}"></span>`).join('') || '<span class="wo-bar-s is-empty" style="flex:1"></span>'}</div>
+          <ul class="wo-stages">${stages.map((b, k) => `<li class="${b.n ? '' : 'is-zero'}"><span class="wo-key wo-bar-s--${k}" aria-hidden="true"></span><span>${b.x}</span><strong>${b.n}</strong></li>`).join('')}</ul>
+          <div class="kp-foot"><span>${next ? `Next due <strong class="mono">${next.id}</strong> · ${fmtDateTime(next.target)}` : 'No open work orders'}</span><span class="kp-flag kp-flag--${flag[0]}">${flag[1]}</span></div>
+        </section>
+        ${kpi({ label: 'Overdue', value: overdue.length, sub: overdue.length ? `<span class="txt-warn">Past target time</span>` : 'All within target', sev: overdue.length ? 'warning' : null })}
+        ${kpi({ label: 'Due in 24 hours', value: dueSoon.length, sub: dueSoon.length ? `Earliest ${fmtDateTime(Math.min(...dueSoon.map((w) => w.target)))}` : 'Nothing due today' })}
+        ${kpi({ label: 'High priority', value: urgent.length, sub: urgent.length ? 'Open high / critical jobs' : 'No high-priority jobs', sev: urgent.length ? 'critical' : null })}
+        ${kpi({ label: 'Maintenance overdue', value: maintLate.length, sub: `${maintSoon.length} more asset${maintSoon.length === 1 ? '' : 's'} due in 14 days`, sev: maintLate.length ? 'warning' : null })}
+      </div>
+      ${tabs([{ id: 'open', label: 'Open', count: open.length }, { id: 'overdue', label: 'Overdue', count: overdue.length }, { id: 'completed', label: 'Completed', count: done.length }, { id: 'all', label: 'All', count: all.length }, { id: 'maintenance', label: 'Maintenance schedule', count: maintLate.length + maintSoon.length }], woFilter, 'wo-tab')}
+      ${woFilter === 'maintenance' ? maintTable(maint) : `<div class="card wo-list">${table(
+        [
+          { label: 'Work order', render: (w) => `<div class="wo-id"><strong class="mono">${w.id}</strong><span>${w.incidentId ? `<span class="mono">${w.incidentId}</span>` : 'Preventive'} · <span class="mono">${w.assetId}</span></span></div>` },
+          { label: 'Task', render: (w) => `<div class="clamp2 wo-task">${esc(w.description)}</div>` },
+          { label: 'Priority', render: (w) => priorityBadge(w.priority) },
+          { label: 'Team', render: (w) => (w.team ? esc(w.team) : '<span class="muted">Unassigned</span>') },
+          { label: 'Progress', render: (w) => woProgress(w) },
+          { label: 'Target', render: (w) => woTarget(w, now) },
+        ],
+        sorted,
+        { rowAction: { action: 'goto-wo', key: 'id' }, empty: 'No work orders in this view' }
+      )}</div>`}`;
   },
 };
 
