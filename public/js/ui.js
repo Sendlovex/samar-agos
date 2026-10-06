@@ -215,6 +215,8 @@ const SOURCE = {
   'CLIMATE RECORD': 'live',
   INCIDENTS: 'tag',
   FIELD: 'tag',
+  'FIELD MEASUREMENT': 'tag',
+  'SIMULATED TELEMETRY': 'sim',
 };
 const SOURCE_TIP = {
   LIVE: 'Live telemetry from a connected sensor',
@@ -226,6 +228,8 @@ const SOURCE_TIP = {
   'RESIDENT REPORTED': 'Information submitted by residents',
   MEASURED: 'Actual meter reading',
   'CLIMATE RECORD': 'Real historical weather record (ERA5 reanalysis via Open-Meteo)',
+  'FIELD MEASUREMENT': 'Measured on site by the field responder — not live sensor data',
+  'SIMULATED TELEMETRY': 'Simulated telemetry for this prototype — not real sensor data',
 };
 export const src = (kind) => `<span class="src src--${SOURCE[kind] || 'est'}" title="${SOURCE_TIP[kind] || ''}">${esc(kind)}</span>`;
 

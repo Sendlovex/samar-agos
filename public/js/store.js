@@ -1,9 +1,9 @@
 // SAMAR-AGOS state store + simulated IoT engine + forecasting + workflow actions.
 // Everything the UI shows is derived from this single connected state.
-import { makeSeed, makeReport, pointInZone, ZONES, zoneById, RESIDENT, PROVIDER_USER, REPORT_STEPS, WO_STEPS, SCENARIOS, reportTypeLabel, CRITICAL_FACILITIES, REAL_ASSETS, SUPPLY, BASE_DEMAND as CWD_DEMAND } from './data.js';
-import { clamp, rng, parsePoly, pointInPolygon, fmtTime, hoursLabel } from './util.js';
+import { makeSeed, makeReport, pointInZone, ZONES, zoneById, RESIDENT, PROVIDER_USER, RESPONDER_USER, REPORT_STEPS, WO_STEPS, SCENARIOS, reportTypeLabel, CRITICAL_FACILITIES, REAL_ASSETS, SUPPLY, BASE_DEMAND as CWD_DEMAND } from './data.js';
+import { clamp, rng, parsePoly, pointInPolygon, fmtTime, hoursLabel, LOCAL_MODE } from './util.js';
 
-const KEY = 'samaragos.state.v6';
+const KEY = LOCAL_MODE ? 'samaragos.state.v6.local' : 'samaragos.state.v6';
 export const TICK_MS = 3000;
 export const DT_MIN = 5; // simulated minutes per tick (accelerated time)
 // Calibrated to Catbalogan Water District (WSP 2022 / LWUA MDS 2022): one 440 m³ ground reservoir in
@@ -1039,7 +1039,12 @@ function processResponderUpdates() {
   const pending = state.workOrders.filter((w) => w.relay?.length && (!w.incidentId || state.incidents.some((i) => i.id === w.incidentId)));
   if (!pending.length) return;
   pending.forEach((wo) => {
-    wo.relay.forEach((r) => workOrderEffects(wo, r.status, r.by));
+    wo.relay.forEach((r) => {
+      if (r.status) workOrderEffects(wo, r.status, r.by);
+      const inc = state.incidents.find((x) => x.id === wo.incidentId);
+      if (r.text && inc) inc.timeline.push({ at: r.at, text: `${wo.id}: ${r.text}` });
+      if (r.alert) notify('provider', r.alert);
+    });
     if (wo.status === 'Completed') notify('provider', { kind: 'wo', title: `${wo.id} completed by ${wo.relay[wo.relay.length - 1].by}`, body: wo.description, link: `#/p/work-orders/${wo.id}` });
     delete wo.relay;
   });
@@ -1068,6 +1073,161 @@ export function setWorkOrderPhoto(id, which, dataUrl) {
   const wo = state.workOrders.find((w) => w.id === id);
   wo.photos[which] = dataUrl;
   commit(`${which === 'before' ? 'Before' : 'After'} photo attached`);
+}
+
+// ---------------------------------------------------------------- field responder workflow
+// Responders move a work order Assigned → En Route → Inspecting → Repairing → Testing → Completed.
+// Their findings live on wo.field; progress also appears on the provider's incident timeline.
+// Nothing here notifies residents — public updates stay with the provider.
+const woById = (id) => state.workOrders.find((w) => w.id === id);
+const fieldOf = (wo) => (wo.field = wo.field || { log: [], photos: [], assistance: [] });
+// A signed-in responder may change only their own work order, so incident and notification
+// updates travel on wo.relay and a staff device applies them (processResponderUpdates).
+const asResponder = () => !!session()?.isResponder;
+const fieldBy = () => (asResponder() ? session().profile?.name || RESPONDER_USER.name : session() ? PROVIDER_USER.name : RESPONDER_USER.name);
+const relay = (wo, item) => (wo.relay = [...(wo.relay || []), { at: Date.now(), by: fieldBy(), ...item }]);
+function fieldLog(wo, text) {
+  const at = Date.now();
+  fieldOf(wo).log.push({ at, text, by: fieldBy() });
+  if (asResponder()) return relay(wo, { text });
+  const inc = state.incidents.find((i) => i.id === wo.incidentId);
+  if (inc) inc.timeline.push({ at, text: `${wo.id}: ${text}` });
+}
+function fieldStep(wo, next) {
+  wo.status = next;
+  wo.history.push({ status: next, at: Date.now(), by: fieldBy() });
+  if (asResponder()) return relay(wo, { status: next });
+  const inc = state.incidents.find((i) => i.id === wo.incidentId);
+  if (inc) inc.timeline.push({ at: Date.now(), text: `${wo.id}: ${next} (${fieldBy()})` });
+}
+function fieldAlert(wo, alert) {
+  if (asResponder()) relay(wo, { alert });
+  else notify('provider', alert);
+}
+
+export function fieldStartResponse(id) {
+  const wo = woById(id);
+  if (!wo || !['New', 'Assigned'].includes(wo.status)) return;
+  fieldStep(wo, 'En Route');
+  commit('Response started — you are en route');
+}
+export function fieldArrive(id) {
+  const wo = woById(id);
+  if (!wo || wo.status !== 'En Route') return;
+  fieldOf(wo).arrivedAt = Date.now();
+  fieldLog(wo, 'Responder arrived on site');
+  commit('Arrival recorded');
+}
+export function fieldStartInspection(id) {
+  const wo = woById(id);
+  if (!wo || wo.status !== 'En Route') return;
+  fieldStep(wo, 'Inspecting');
+  commit('Inspection started');
+}
+export function fieldSaveInspection(id, data, needsRepair) {
+  const wo = woById(id);
+  if (!wo) return;
+  fieldOf(wo).inspection = { ...data, needsRepair, at: Date.now(), by: fieldBy() };
+  const found = (data.conditions || []).join(', ') || 'no condition recorded';
+  fieldLog(wo, `Inspection recorded: ${found}${data.pressure ? ` (${data.pressure} PSI)` : ''}`);
+  if (needsRepair) {
+    if (wo.status === 'Inspecting') fieldStep(wo, 'Repairing');
+    commit('Inspection saved — repair started');
+  } else {
+    fieldLog(wo, 'No repair needed yet — investigation continues');
+    commit('Inspection saved');
+  }
+}
+export function fieldSaveRepair(id, data, msg = 'Repair details saved') {
+  const wo = woById(id);
+  if (!wo) return;
+  fieldOf(wo).repair = { ...data, at: Date.now(), by: fieldBy() };
+  commit(msg);
+}
+export function fieldAddPhoto(id, photo) {
+  const wo = woById(id);
+  if (!wo) return;
+  const f = fieldOf(wo);
+  if (f.photos.length >= 9) return toast('Photo limit reached (9 per work order). Remove one to add another.', 'error');
+  f.photos.push({ ...photo, at: Date.now(), by: fieldBy() });
+  fieldLog(wo, `${{ before: 'Before-repair', during: 'During-repair', after: 'After-repair' }[photo.stage] || 'Field'} photo added`);
+  commit('Photo added');
+}
+export function fieldPhotoCaption(id, i, caption) {
+  const p = woById(id)?.field?.photos?.[i];
+  if (!p) return;
+  p.caption = caption;
+  commit();
+}
+export function fieldRemovePhoto(id, i) {
+  const wo = woById(id);
+  if (!wo?.field?.photos?.[i]) return;
+  wo.field.photos.splice(i, 1);
+  commit('Photo removed');
+}
+// Short progress note for the provider (work order + incident timeline) — never shown to residents.
+export function fieldUpdate(id, text) {
+  const wo = woById(id);
+  if (!wo || !text.trim()) return;
+  wo.notes.push({ at: Date.now(), by: fieldBy(), text: text.trim() });
+  fieldLog(wo, `Field update: ${text.trim()}`);
+  commit('Update sent to your provider');
+}
+export function fieldRequestAssistance(id, reason, text) {
+  const wo = woById(id);
+  if (!wo) return;
+  fieldOf(wo).assistance.push({ at: Date.now(), reason, text, by: fieldBy() });
+  fieldLog(wo, `Assistance requested: ${reason}${text ? ` — ${text}` : ''}`);
+  fieldAlert(wo, { kind: 'Work Orders', title: `Assistance requested — ${wo.id}`, body: `${reason}${text ? `: ${text}` : ''}`, link: `#/p/work-orders/${wo.id}`, severity: 'warning' });
+  commit('Assistance request sent to your provider');
+}
+export function fieldBeginVerification(id, repair) {
+  const wo = woById(id);
+  if (!wo || wo.status !== 'Repairing') return;
+  fieldOf(wo).repair = { ...repair, at: Date.now(), by: fieldBy() };
+  fieldLog(wo, `Repair completed: ${(repair.actions || []).join(', ') || 'see repair notes'}`);
+  fieldStep(wo, 'Testing');
+  commit('Repair saved — testing started');
+}
+export function fieldBackToRepair(id) {
+  const wo = woById(id);
+  if (!wo || wo.status !== 'Testing') return;
+  fieldStep(wo, 'Repairing');
+  commit('Back to repair');
+}
+export function fieldSaveVerification(id, data) {
+  const wo = woById(id);
+  if (!wo) return;
+  fieldOf(wo).verify = { ...data, at: Date.now(), by: fieldBy() };
+  if (data.restored === 'full') fieldLog(wo, `Service verified — fully restored${data.pressure ? ` (${data.pressure} PSI)` : ''}`);
+  else {
+    const partial = data.restored === 'partial';
+    fieldLog(wo, partial ? `Service partially restored: ${data.explain}` : `Problem remains: ${data.reason} — recommended: ${data.next}`);
+    fieldAlert(wo, { kind: 'Work Orders', title: `${partial ? 'Partially restored' : 'Problem remains'} — ${wo.id}`, body: partial ? data.explain : `${data.reason}. Recommended: ${data.next}`, link: `#/p/work-orders/${wo.id}`, severity: partial ? 'warning' : 'critical' });
+  }
+  commit(data.restored === 'full' ? 'Verification saved' : 'Sent to your provider for follow-up');
+}
+// Completes the work order (field work only). The incident moves to Monitoring; the provider still decides when it is resolved.
+export function fieldComplete(id) {
+  const wo = woById(id);
+  const v = wo?.field?.verify;
+  if (!wo || wo.status !== 'Testing' || v?.restored !== 'full') return;
+  fieldLog(wo, 'Field work complete — verified result sent to the provider');
+  if (!asResponder()) fieldAlert(wo, { kind: 'Work Orders', title: `Field work complete — ${wo.id}`, body: `Service restored${v.pressure ? `; pressure ${v.pressure} PSI after repair` : ''}. Review and resolve the incident when ready.`, link: `#/p/work-orders/${wo.id}`, severity: 'normal' });
+  advanceWorkOrder(id, { notes: v.notes, reading: v.pressure ? `${v.pressure} PSI after repair (field measurement)` : '', restored: 'Fully restored', by: fieldBy() });
+}
+
+// Demo: a low-pressure incident with resident reports and a work order assigned to responder `r`.
+export async function createResponderDemo(r) {
+  const z = ZONES[1] || ZONES[0];
+  state.zoneIssues[z.id] = { type: 'line', label: `Low Pressure — ${z.short}`, pressureDrop: 17, flowChange: -21, lossML: 0.5, since: Date.now() - 40 * 60000, spawn: false };
+  updateDerived(state.tele, state.tele.simTime);
+  const before = new Set(state.reports.map((r) => r.id));
+  for (let i = 0; i < 17; i++) spawnReport(z.id, 'line');
+  const reportIds = state.reports.filter((r) => !before.has(r.id)).map((r) => r.id);
+  const inc = await createIncident({ zone: z.id, reportIds, title: `Low Pressure — ${z.short}`, type: 'Low Pressure', severity: 'High', note: 'Demo scenario for the responder workflow.' });
+  const asset = state.assets.find((a) => a.zone === z.id && a.x != null);
+  return createWorkOrder({ incidentId: inc.id, assetId: asset?.id || 'PL-NET', location: z.name, priority: 'High', team: r.name, responder: r.loginEmail, target: Date.now() + 52 * 60000, description: 'Inspect the main distribution line and valve near the eastern service boundary.' });
 }
 
 // ---------------------------------------------------------------- advisories

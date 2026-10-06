@@ -1,5 +1,8 @@
 // Shared helpers: escaping, formatting, time, geometry.
 
+// Open the app with ?local to run a local copy: no Firebase, nothing written to the shared database.
+export const LOCAL_MODE = typeof location !== 'undefined' && new URLSearchParams(location.search).has('local');
+
 export const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 

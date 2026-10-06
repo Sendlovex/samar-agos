@@ -9,7 +9,7 @@ import { esc, relTime, fmtDate, fmtDateTime, toXY, readImage } from './util.js';
 import { residentViews } from './views/resident.js';
 import { weatherState, describe as describeWeather } from './weather.js';
 import { providerViews } from './views/provider.js';
-import { responderViews } from './views/responder.js';
+import { fieldViews as responderViews, syncLabel, mine as myWorkOrders } from './views/field.js';
 import { setWoFilter } from './views/provider-incidents.js';
 
 S.load();
@@ -67,10 +67,12 @@ const PRO_NAV = [
   ] },
 ];
 
+// Field responder navigation (same grouped sidebar as the other portals).
 const RSP_NAV = [
-  { group: 'Field Work', items: [
-    { id: 'jobs', label: 'My Work Orders', icon: 'wrench', count: () => S.getState().workOrders.filter((w) => w.responder === RESPONDER_USER.loginEmail && w.status !== 'Completed').length },
+  { group: 'My Work', items: [
+    { id: 'jobs', label: 'My Assignments', icon: 'clipboard', count: () => myWorkOrders().filter((w) => w.status !== 'Completed').length },
   ] },
+  { group: 'Account', items: [{ id: 'profile', label: 'Profile', icon: 'user' }] },
 ];
 // Each role has its own area of the app: r = resident, p = provider, c = field responder (crew).
 const AREA = { resident: 'r', provider: 'p', responder: 'c' };
@@ -419,7 +421,7 @@ async function enterApp() {
   renderSplash('Syncing with the SAMAR-AGOS database…');
   await B.startSync();
   const pref = localStorage.getItem(ROLE_KEY);
-  role = ses.isProvider ? (pref === 'resident' ? 'resident' : 'provider') : ses.isResponder ? 'responder' : 'resident';
+  role = ses.isProvider ? (pref === 'resident' || pref === 'responder' ? pref : 'provider') : ses.isResponder ? 'responder' : 'resident';
   const { area } = parse();
   if (area !== AREA[role]) go(homeOf(role));
   else render();
@@ -569,6 +571,8 @@ function renderShell(area, page, html) {
   const aud = res ? 'resident' : crew ? 'responder' : 'provider';
   const unread = s.notifications.filter((n) => n.audience === aud && n.state === 'unread').length;
   const home = HOME[area];
+  const nav = res ? RES_NAV : crew ? RSP_NAV : PRO_NAV;
+  const navPage = crew && page !== 'profile' ? 'jobs' : page; // workflow screens live under My Assignments
   app.innerHTML = `<div class="pv">
     <a class="skip" href="#view">Skip to content</a>
     <aside class="sb" id="sidebar" aria-label="${res ? 'Resident' : crew ? 'Responder' : 'Provider'} navigation">
@@ -577,9 +581,9 @@ function renderShell(area, page, html) {
         <div class="sb-scene">${cityScene(sceneWeather())}</div>
       </div>
       <nav class="sb-nav">
-        ${(res ? RES_NAV : crew ? RSP_NAV : PRO_NAV).map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
+        ${nav.map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
           const c = n.count ? n.count() : null;
-          const on = page === n.id || (res && page === 'report' && n.id === 'reports'); // the report form belongs to My Reports
+          const on = navPage === n.id || (res && page === 'report' && n.id === 'reports'); // the report form belongs to My Reports
           return `<a href="#/${area}/${n.id}" class="sb-a ${on ? 'is-active' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
         }).join('')}</div>`).join('')}
       </nav>
@@ -597,6 +601,7 @@ function renderShell(area, page, html) {
           ${accountMenu(area)}
         </div>
       </header>
+      ${crew ? `<div class="fx-offline" id="fx-off" role="status" ${B.syncState().online ? 'hidden' : ''}>${icon('x-circle', 16)}<span><strong>Offline.</strong> Updates are saved on this device and will sync when a connection is available.</span></div>` : ''}
       <main id="view" class="pv-content ${res ? 'pv-content--res' : ''} scroll-root" tabindex="-1">${html}</main>
     </div>
   </div>`;
@@ -625,10 +630,11 @@ function accountMenu(area) {
   const email = B.FB_ENABLED ? B.getSession()?.email : '';
   const av = `<span class="avatar ${res ? '' : 'avatar--navy'}">${user.initials}</span>`;
   return `<details class="acct">
-    <summary class="acct-btn" aria-label="Account menu for ${esc(user.name)}"><span class="acct-id"><strong>${esc(user.name)}</strong></span>${icon('chev-d', 14)}</summary>
+    <summary class="acct-btn" aria-label="Account menu for ${esc(user.name)}"><span class="acct-ini" aria-hidden="true">${esc(user.initials)}</span><span class="acct-id"><strong>${esc(user.name)}</strong></span>${icon('chev-d', 14)}</summary>
     <div class="acct-menu">
       <div class="acct-head">${av}<span><strong>${esc(user.name)}</strong>${email || res ? `<span>${esc(email || user.address)}</span>` : ''}</span></div>
       <button data-action="account-settings">${icon('user', 16)}<span>Account settings</span></button>
+      ${area !== 'r' && canSwitchRole() ? (area === 'c' ? `<button data-action="switch-to" data-role="provider">${icon('activity', 16)}<span>Operator view</span></button>` : `<button data-action="switch-to" data-role="responder">${icon('wrench', 16)}<span>Field responder view</span></button>`) : ''}
       ${area === 'p' ? `<button data-action="demo-toggle" aria-pressed="${isDemoMode()}">${icon('play', 16)}<span>Demo mode: ${isDemoMode() ? 'On' : 'Off'}</span></button>` : ''}
       <button data-action="logout" class="acct-out">${icon('logout', 16)}<span>Sign out</span></button>
     </div>
@@ -653,9 +659,8 @@ function headerStatus() {
     return cell('#/r/home', `Brgy. ${RESIDENT.barangay}`, r.sev, label, 'Water service in your area');
   }
   if (current?.area === 'c') {
-    const open = S.getState().workOrders.filter((w) => w.responder === RESPONDER_USER.loginEmail && w.status !== 'Completed');
-    const late = open.filter((w) => w.target < Date.now()).length;
-    return cell('#/c/jobs', 'Open jobs', late ? 'warning' : 'normal', late ? `${open.length}, ${late} overdue` : String(open.length), 'Work orders assigned to you');
+    const l = syncLabel();
+    return cell('#/c/profile', 'Field updates', l.sev, l.word, l.tip);
   }
   const o = S.overallStatus();
   const label = { normal: 'Normal', warning: 'Warning', critical: 'Critical', offline: 'Data unavailable' }[o.sev];
@@ -663,7 +668,17 @@ function headerStatus() {
 }
 
 // ---------------------------------------------------------------- live updates
-S.on('change', () => current && render());
+S.on('change', () => {
+  if (!current) return;
+  if (current.view.holdOnChange && document.activeElement?.closest('#view input, #view textarea, #view select')) return;
+  render();
+});
+B.onSync(() => {
+  const el = current?.area === 'c' && document.getElementById('tb-status');
+  if (el) el.innerHTML = headerStatus();
+  const off = document.getElementById('fx-off');
+  if (off) off.hidden = B.syncState().online;
+});
 S.on('tick', () => {
   if (!current) return;
   const root = document.getElementById('view');
@@ -820,6 +835,23 @@ register({
       showToast({ msg: `${email} removed from staff access`, kind: 'info' });
       await openTeamAccess();
     }),
+  'responder-demo': async (el) => {
+    const shared = B.FB_ENABLED;
+    if (shared && !(await confirmDialog({ title: 'Create the responder demo?', body: 'This adds a sample incident, 17 simulated resident reports and a work order to the shared database. Everyone on your team will see them.', confirm: 'Create demo' }))) return;
+    await busy(el, async () => {
+      const r = S.responders()[0] || RESPONDER_USER;
+      const wo = await S.createResponderDemo(r);
+      closeOverlay();
+      showToast({ msg: `${wo.id} assigned to ${r.name}. Open the Field responder view to work on it.`, kind: 'success' });
+    });
+  },
+  'switch-to': (el) => {
+    if (!canSwitchRole() || !AREA[el.dataset.role]) return;
+    role = el.dataset.role;
+    localStorage.setItem(ROLE_KEY, role);
+    go(homeOf(role));
+    showToast({ msg: `Switched to the ${{ resident: 'resident', provider: 'operator', responder: 'field responder' }[role]} view`, kind: 'info' });
+  },
   'switch-role': () => {
     if (!canSwitchRole()) return;
     role = role === 'resident' ? 'provider' : 'resident';
@@ -886,6 +918,8 @@ function openDemoPanel() {
         ([k, v]) => `<div class="scn ${act.has(k) ? 'is-on' : ''}"><div><strong>${v.label}</strong>${act.has(k) ? ' ' + status('warning', 'Active') : ''}<p>${v.desc}</p><p class="scn-shows">${k === 'normal' ? 'Returns every screen to normal' : `Shows: ${(SCENARIO_SHOWS[k] || []).map((f) => DEMO_FEATURES[f]).join(', ')}`}</p></div><button class="btn btn--sm ${k === 'normal' ? 'btn--outline' : 'btn--primary'}" data-action="apply-scenario" data-id="${k}">${k === 'normal' ? 'Restore normal' : 'Apply'}</button></div>`
       )
       .join('')}</div>
+    <h3 class="sec-t">Responder workflow</h3>
+    <div class="scn-list"><div class="scn"><div><strong>Low pressure + assigned work order</strong><p>Creates a low-pressure incident with 17 simulated resident reports and assigns a work order to the first field responder, ready for the Field responder view.</p></div><button class="btn btn--sm btn--primary" data-action="responder-demo">Create</button></div></div>
     <button class="btn btn--danger-ghost" data-action="reset-demo">Reset demo scenarios</button>`,
     { sub: 'Simulated readings, not live control' }
   );

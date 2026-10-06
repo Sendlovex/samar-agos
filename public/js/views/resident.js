@@ -522,12 +522,14 @@ register({
     if (!draft) return;
     const p = { x: +el.dataset.x, y: +el.dataset.y };
     draft.pin = p;
-    if (draft.useHome && (Math.abs(p.x - RESIDENT.x) > 25 || Math.abs(p.y - RESIDENT.y) > 25)) {
+    const z = zoneAt(p);
+    // Moving the pin away from home (or into another barangay) means "Another place".
+    if (draft.useHome && (Math.abs(p.x - RESIDENT.x) > 25 || Math.abs(p.y - RESIDENT.y) > 25 || (z && !z.barangays.includes(RESIDENT.barangay)))) {
       draft.useHome = false;
-      const z = zoneAt(p);
-      draft.barangay = z ? z.barangays[0] : draft.barangay;
       draft.location = '';
     }
+    // The barangay always follows the pin.
+    if (!draft.useHome && z) draft.barangay = z.barangays[0];
     rerender();
   },
   'rp-photo-rm': () => ((draft.photo = null), rerender()),

@@ -83,11 +83,11 @@ service cloud.firestore {
     match /workOrders/{id} {
       allow read: if signedIn();
       allow write: if isProvider();
-      // the assigned responder records progress, notes, photos and completion only
+      // the assigned responder records progress, notes, photos, field findings and completion only
       allow update: if isResponder() && resource.data.responder == myEmail()
         && request.resource.data.responder == myEmail()
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'history', 'notes', 'photos', 'completion', 'relay', 'updatedAt']);
+             .hasOnly(['status', 'history', 'notes', 'photos', 'completion', 'relay', 'field', 'updatedAt']);
     }
     match /advisories/{id} {
       allow read: if signedIn();

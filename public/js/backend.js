@@ -6,9 +6,10 @@
 // Telemetry stays a per-device simulation driven by the shared system/control document.
 import { FIREBASE_CONFIG, ADVISORY_EMAIL_URL } from './firebase-config.js';
 import * as S from './store.js';
+import { LOCAL_MODE } from './util.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
-export const FB_ENABLED = !!FIREBASE_CONFIG.apiKey;
+export const FB_ENABLED = !!FIREBASE_CONFIG.apiKey && !LOCAL_MODE;
 
 export const COLLS = ['reports', 'incidents', 'workOrders', 'advisories', 'notifications', 'altWater', 'emergencyTanks', 'assets'];
 const SEED_COUNTERS = { report: 1, incident: 1, wo: 1, adv: 1 };
@@ -23,6 +24,16 @@ let unsubs = [];
 const synced = Object.fromEntries(COLLS.map((c) => [c, new Map()]));
 let syncedControl = null;
 let syncedPublic = null;
+
+// ---------------------------------------------------------------- sync status (for the field app)
+// "pending" counts batches the server has not confirmed yet; Firestore keeps them queued while offline.
+let pending = 0;
+let lastSyncedAt = 0;
+const syncSubs = new Set();
+const emitSync = () => syncSubs.forEach((fn) => fn(syncState()));
+export const onSync = (fn) => (syncSubs.add(fn), () => syncSubs.delete(fn));
+export const syncState = () => ({ enabled: FB_ENABLED, online: typeof navigator === 'undefined' || navigator.onLine, pending, lastSyncedAt });
+if (typeof window !== 'undefined') ['online', 'offline'].forEach((e) => window.addEventListener(e, emitSync));
 
 // ---------------------------------------------------------------- init
 export async function initBackend() {
@@ -335,13 +346,21 @@ export function flush() {
   const run = async () => {
     for (let i = 0; i < ops.length; i += 400) await commitOps(ops.slice(i, i + 400).map((o) => o.op));
   };
-  return run().catch((e) => {
-    // forget what failed so the next change retries it
-    ops.forEach((o) => o.coll && synced[o.coll].delete(o.id));
-    syncedControl = null;
-    syncedPublic = null;
-    throw e;
-  });
+  pending++;
+  emitSync();
+  return run()
+    .then(() => (lastSyncedAt = Date.now()))
+    .catch((e) => {
+      // forget what failed so the next change retries it
+      ops.forEach((o) => o.coll && synced[o.coll].delete(o.id));
+      syncedControl = null;
+      syncedPublic = null;
+      throw e;
+    })
+    .finally(() => {
+      pending--;
+      emitSync();
+    });
 }
 
 // ---------------------------------------------------------------- live sync

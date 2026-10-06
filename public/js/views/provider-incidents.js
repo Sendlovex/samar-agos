@@ -581,6 +581,33 @@ register({
   'goto-wo': (el) => go(`#/p/work-orders/${el.dataset.id}`),
 });
 
+// Field report from the responder app (inspection, repair, photos, verification, assistance requests).
+function fieldReport(w) {
+  const f = w.field;
+  const list = (a) => esc((a || []).join(', ') || '—');
+  const rows = [
+    f.arrivedAt && ['Arrived on site', fmtDateTime(f.arrivedAt)],
+    f.inspection && ['Findings', list(f.inspection.conditions)],
+    f.inspection && ['Possible cause', list(f.inspection.causes)],
+    f.inspection?.pressure && ['Pressure before', `${esc(f.inspection.pressure)} PSI ${src('FIELD MEASUREMENT')}`],
+    f.repair && ['Repair', list(f.repair.actions)],
+    f.repair?.materials?.length && ['Materials', esc(f.repair.materials.map((m) => `${m.name}${m.qty ? ` × ${m.qty}` : ''}`).join(', '))],
+    f.verify && ['Service', { full: 'Fully restored', partial: 'Partially restored', no: 'Problem remains' }[f.verify.restored] || '—'],
+    f.verify?.pressure && ['Pressure after', `${esc(f.verify.pressure)} PSI ${src('FIELD MEASUREMENT')}`],
+    f.verify?.explain && ['Still wrong', esc(f.verify.explain)],
+    f.verify?.reason && ['Reason / next step', `${esc(f.verify.reason)} — ${esc(f.verify.next || '')}`],
+  ].filter(Boolean);
+  const ast = (f.assistance || []).map((a) => `<li><strong>${esc(a.reason)}</strong><span>${esc(a.text || '')}</span><time>${fmtDateTime(a.at)}</time></li>`).join('');
+  const ph = (f.photos || []).map((p) => `<figure><img src="${p.src}" alt="${esc(p.caption || p.stage + ' photo')}"/><figcaption>${esc({ before: 'Before', during: 'During', after: 'After' }[p.stage] || '')}${p.caption ? ` — ${esc(p.caption)}` : ''} · ${fmtTime(p.at)}</figcaption></figure>`).join('');
+  return card(
+    'Field report',
+    `${rows.length ? `<dl class="kv">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` : '<p class="muted sm">Nothing recorded yet.</p>'}
+    ${ast ? `<h4 class="sec-t sm">Assistance requested</h4><ul class="fr-assist">${ast}</ul>` : ''}
+    ${ph ? `<h4 class="sec-t sm">Field photos</h4><div class="fr-photos">${ph}</div>` : ''}`,
+    { sub: 'Recorded by the responder on site', actions: src('FIELD') }
+  );
+}
+
 const workOrderDetail = {
   title: 'Work Order',
   render({ id }) {
@@ -624,6 +651,7 @@ const workOrderDetail = {
               .join('')}</div>
             ${w.completion ? `<dl class="kv kv--3 mt"><div><dt>Completion timestamp</dt><dd>${fmtDateTime(w.completion.at)}</dd></div><div><dt>Verification reading</dt><dd>${esc(w.completion.reading || '—')} ${src('MANUAL')}</dd></div><div class="kv-wide"><dt>Repair notes</dt><dd>${esc(w.completion.notes || '—')}</dd></div></dl>` : ''}`
           )}
+          ${w.field ? fieldReport(w) : ''}
           ${card(
             'Technician notes',
             `${w.notes.length ? `<ul class="notes">${w.notes.map((n) => `<li><div class="notes-h"><strong>${esc(n.by)}</strong><time>${fmtDateTime(n.at)}</time></div><p>${esc(n.text)}</p></li>`).join('')}</ul>` : '<p class="muted sm">No technician notes yet.</p>'}
