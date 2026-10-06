@@ -41,7 +41,7 @@ const RES_NAV = [
   ] },
   { group: 'Resources', items: [
     { id: 'consumption', label: 'Consumption', icon: 'bars' },
-    { id: 'water-access', label: 'Alternative Water Access', icon: 'truck' },
+    { id: 'water-access', label: 'Where to Get Water', icon: 'truck' },
   ] },
 ];
 const PRO_NAV = [
@@ -474,7 +474,7 @@ function headerStatus() {
   if (current?.area === 'r') {
     const r = S.residentService();
     const label = r.label.charAt(0) + r.label.slice(1).toLowerCase();
-    return `<a href="#/r/home" class="tb-sys" title="Service status for your area">${status(r.sev, `Zone ${esc(RESIDENT.zone)} · ${esc(label)}`)}</a>`;
+    return `<a href="#/r/home" class="tb-sys" title="Service status for your area">${status(r.sev, `${esc(ZONES.find((z) => z.id === RESIDENT.zone)?.short || RESIDENT.zone)} · ${esc(label)}`)}</a>`;
   }
   const o = S.overallStatus();
   const label = { normal: 'System Normal', warning: 'System Warning', critical: 'System Critical', offline: 'Data Unavailable' }[o.sev];

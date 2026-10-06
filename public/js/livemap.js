@@ -119,13 +119,14 @@ function mount(el) {
   if (v && !ro) map.setView(v.center, v.zoom, { animate: false });
   else fitDefault(I);
   map.on('moveend', () => views.set(id, { center: map.getCenter(), zoom: map.getZoom() }));
-  setTimeout(() => map.invalidateSize(), 60);
+  setTimeout(() => map.getContainer().isConnected && map.invalidateSize(), 60); // the page may have redrawn and dropped this map
 }
 
 function fitDefault(I) {
   const o = I.opts;
   if (o.pin && (I.mode === 'picker')) return I.map.setView(toLL(o.pin.x, o.pin.y), o.readonly ? 16 : 15.5, { animate: false });
-  if (o.focusZone) return I.map.fitBounds(L.latLngBounds(zoneLL(o.focusZone)), { padding: [24, 24], animate: false });
+  // the water-points map starts a little wider so neighbouring areas are visible around the resident's own
+  if (o.focusZone) return I.map.fitBounds(L.latLngBounds(zoneLL(o.focusZone)), { padding: I.mode === 'resident' && o.alt ? [90, 90] : [24, 24], animate: false });
   const all = ZONES.flatMap((z) => zoneLL(z.id));
   I.map.fitBounds(L.latLngBounds(all), { padding: [16, 16], animate: false });
 }
@@ -294,16 +295,28 @@ function sync(I) {
   I.markers.forEach((m) => (m._seen = false));
 
   // zones
+  // Resident "Where to Get Water" map: two colours only — blue for the resident's own area (with a
+  // permanent label) and one neutral slate for every other area, all with solid outlines.
+  const altMap = mode === 'resident' && I.opts.alt;
   ZONES.forEach((z) => {
     const zs = mode === 'picker' ? 'neutral' : t.zones[z.id].status;
     const focus = I.opts.focusZone === z.id;
     const c = zs === 'neutral' ? '#1D6FB8' : COL[zs];
-    const style = { color: focus ? '#0B2545' : c, weight: focus ? 3 : 1.6, dashArray: focus ? null : '5 5', fillColor: c, fillOpacity: zs === 'normal' || zs === 'neutral' ? 0.05 : 0.17 };
-    const label = mode === 'provider' ? `<b>${esc(z.short.toUpperCase())}</b><span>${fmt(t.zones[z.id].pressure, 0)} PSI${zs !== 'normal' ? ' ▼' : ''}</span>` : `<b>${esc(z.short.toUpperCase())}</b><span>${esc(z.barangays.join(' · '))}</span>`;
+    let style = { color: focus ? '#0B2545' : c, weight: focus ? 3 : 1.6, dashArray: focus ? null : '5 5', fillColor: c, fillOpacity: zs === 'normal' || zs === 'neutral' ? 0.05 : 0.17 };
+    if (altMap) {
+      style = focus
+        ? { color: '#0B2545', weight: 4, dashArray: null, opacity: 1, fillColor: '#1D6FB8', fillOpacity: 0.3 }
+        : { color: '#64748B', weight: 2, dashArray: null, opacity: 0.85, fillColor: '#64748B', fillOpacity: 0.14 };
+    }
+    const label = mode === 'provider' ? `<b>${esc(z.short.toUpperCase())}</b><span>${fmt(t.zones[z.id].pressure, 0)} PSI${zs !== 'normal' ? ' ▼' : ''}</span>` : altMap && focus ? `<b>YOUR AREA</b><span>${esc(z.short)}</span>` : `<b>${esc(z.short.toUpperCase())}</b><span>${esc(z.barangays.join(' · '))}</span>`;
     let p = I.zones.get(z.id);
     if (!p) {
-      p = L.polygon(zoneLL(z.id), { ...style, interactive: mode === 'provider' }).addTo(I.groups.zones);
-      p.bindTooltip(label, { permanent: false, sticky: true, direction: 'top', className: 'lm-zone' });
+      p = L.polygon(zoneLL(z.id), { ...style, interactive: mode === 'provider' || altMap }).addTo(I.groups.zones);
+      p.bindTooltip(label, { permanent: altMap && focus, sticky: !(altMap && focus), direction: altMap && focus ? 'center' : 'top', className: `lm-zone${altMap && focus ? ' lm-zone--mine' : ''}` });
+      if (altMap) {
+        p.on('mouseover', () => p.setStyle({ weight: focus ? 5 : 3, fillOpacity: Math.min(0.45, p.options.fillOpacity + 0.12) }));
+        p.on('mouseout', () => sync(I));
+      }
       if (mode === 'provider') {
         p.on('mouseover', () => p.setStyle({ weight: 3, fillOpacity: Math.max(0.12, p.options.fillOpacity + 0.06) }));
         p.on('mouseout', () => sync(I));
