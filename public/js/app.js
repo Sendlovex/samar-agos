@@ -37,7 +37,6 @@ const RES_NAV = [
     { id: 'outlook', label: 'Water Outlook', icon: 'forecast' },
   ] },
   { group: 'Reports', items: [
-    { id: 'report', label: 'Report a Problem', icon: 'plus' },
     { id: 'reports', label: 'My Reports', icon: 'clipboard', count: () => S.getState().reports.filter((r) => r.mine && r.status !== 'verified').length },
   ] },
   { group: 'Resources', items: [
@@ -400,7 +399,8 @@ function renderShell(area, page, html) {
       <nav class="sb-nav">
         ${(res ? RES_NAV : PRO_NAV).map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
           const c = n.count ? n.count() : null;
-          return `<a href="#/${area}/${n.id}" class="sb-a ${page === n.id ? 'is-active' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
+          const on = page === n.id || (res && page === 'report' && n.id === 'reports'); // the report form belongs to My Reports
+          return `<a href="#/${area}/${n.id}" class="sb-a ${on ? 'is-active' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
         }).join('')}</div>`).join('')}
       </nav>
     </aside>
@@ -454,9 +454,6 @@ function freshness() {
 function headerStatus() {
   if (current?.area === 'r') {
     const r = S.residentService();
-    // Same rule as the home status card: unsafe water outranks "normal" service.
-    if (r.sev === 'normal' && S.waterSafety().verdict === 'unsafe')
-      return `<a href="#/r/home" class="tb-sys" title="Water tests found a problem. Do not drink tap water.">${status('critical', `Zone ${esc(RESIDENT.zone)} · Don't drink tap water`)}</a>`;
     const label = r.label.charAt(0) + r.label.slice(1).toLowerCase();
     return `<a href="#/r/home" class="tb-sys" title="Service status for your area">${status(r.sev, `Zone ${esc(RESIDENT.zone)} · ${esc(label)}`)}</a>`;
   }
