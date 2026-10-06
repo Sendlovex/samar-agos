@@ -2,7 +2,7 @@
 import * as S from './store.js';
 import * as B from './backend.js';
 import { RESIDENT, PROVIDER_USER, SCENARIOS, UTILITY, ZONES, BARANGAY_LL, zoneOfBarangay } from './data.js';
-import { icon, logo, logoMark, cityScene, status, register, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
+import { icon, logoMark, cityScene, status, register, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
 import { installChartHover, measureCharts } from './charts.js';
 import { syncMaps } from './livemap.js';
 import { esc, relTime, fmtDateTime, toXY } from './util.js';
@@ -29,15 +29,19 @@ window.addEventListener('resize', () => {
 });
 
 const RES_NAV = [
-  { id: 'home', label: 'My Water Service', short: 'Home', icon: 'home' },
-  { id: 'advisories', label: 'Advisories', short: 'Advisories', icon: 'megaphone' },
-  { id: 'report', label: 'Report a Problem', short: 'Report', icon: 'plus' },
-  { id: 'reports', label: 'My Reports', short: 'My Reports', icon: 'clipboard' },
-  { id: 'consumption', label: 'Consumption', icon: 'bars' },
-  { id: 'outlook', label: 'Water Outlook', icon: 'forecast' },
-  { id: 'water-access', label: 'Alternative Water Access', icon: 'truck' },
-  { id: 'notifications', label: 'Notifications', icon: 'bell' },
-  { id: 'profile', label: 'Profile', icon: 'user' },
+  { group: 'My Service', items: [
+    { id: 'home', label: 'My Water Service', icon: 'home' },
+    { id: 'advisories', label: 'Advisories', icon: 'megaphone', count: () => S.getState().advisories.filter((a) => a.status === 'Active' && a.areas.includes(RESIDENT.zone)).length },
+    { id: 'outlook', label: 'Water Outlook', icon: 'forecast' },
+  ] },
+  { group: 'Reports', items: [
+    { id: 'report', label: 'Report a Problem', icon: 'plus' },
+    { id: 'reports', label: 'My Reports', icon: 'clipboard', count: () => S.getState().reports.filter((r) => r.mine && r.status !== 'verified').length },
+  ] },
+  { group: 'Resources', items: [
+    { id: 'consumption', label: 'Consumption', icon: 'bars' },
+    { id: 'water-access', label: 'Alternative Water Access', icon: 'truck' },
+  ] },
 ];
 const PRO_NAV = [
   { group: 'Monitor', items: [
@@ -91,8 +95,7 @@ function render() {
     console.error(err);
     html = empty('Something went wrong rendering this page', esc(err.message), 'octagon');
   }
-  if (area === 'r') renderResidentShell(pg, html);
-  else renderProviderShell(pg, view, html);
+  renderShell(area, pg, html);
   view.mount?.(document.getElementById('view'), params);
   window.scrollTo(0, scroll || 0);
   if (!rerendering && measureCharts()) {
@@ -375,46 +378,25 @@ async function openTeamAccess() {
   );
 }
 
-// ---------------------------------------------------------------- resident shell
-function renderResidentShell(page, html) {
+// ---------------------------------------------------------------- app shell (shared by both portals)
+// Residents and staff get the same sidebar + top bar; only the nav, status pill and menu differ.
+function renderShell(area, page, html) {
   const s = S.getState();
-  const unread = s.notifications.filter((n) => n.audience === 'resident' && n.state === 'unread').length;
-  const primary = ['home', 'advisories', 'report', 'reports'];
-  const isMore = !primary.includes(page);
-  app.innerHTML = `<div class="rv">
-    <a class="skip" href="#view">Skip to content</a>
-    <header class="rh"><div class="rh-in">
-      <a href="#/r/home" class="rh-logo" aria-label="SAMAR-AGOS home">${logo({ size: 32, tagline: false })}</a>
-      <nav class="rh-nav" aria-label="Resident">${RES_NAV.filter((n) => !['notifications', 'profile'].includes(n.id)).map((n) => `<a href="#/r/${n.id}" class="${page === n.id || (page === 'reports' && n.id === 'reports') ? 'is-active' : ''}">${esc(n.label)}</a>`).join('')}</nav>
-      <div class="rh-right">
-        <a href="#/r/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
-        <a href="#/r/profile" class="avatar" aria-label="Profile">${RESIDENT.initials}</a>
-      </div></div>
-    </header>
-    <main id="view" class="rv-main scroll-root" tabindex="-1">${html}</main>
-    <nav class="bn" aria-label="Resident mobile">
-      ${RES_NAV.filter((n) => primary.includes(n.id)).map((n) => `<a href="#/r/${n.id}" class="${page === n.id || (n.id === 'reports' && page === 'reports') ? 'is-active' : ''} ${n.id === 'report' ? 'bn-cta' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 20)}<span>${esc(n.short)}</span></a>`).join('')}
-      <button class="${isMore ? 'is-active' : ''}" data-action="res-more">${icon('menu', 20)}<span>More</span></button>
-    </nav>
-    <footer class="rv-foot">SAMAR-AGOS prototype · ${esc(UTILITY.name)} (fictional) · ${B.FB_ENABLED ? 'Telemetry simulated' : 'Demo data only'}${canSwitchRole() ? ' · <button class="linkish" data-action="switch-role">Switch to provider view</button>' : ''}</footer>
-  </div>`;
-}
-
-// ---------------------------------------------------------------- provider shell
-function renderProviderShell(page, view, html) {
-  const s = S.getState();
-  const unread = s.notifications.filter((n) => n.audience === 'provider' && n.state === 'unread').length;
+  const res = area === 'r';
+  const aud = res ? 'resident' : 'provider';
+  const unread = s.notifications.filter((n) => n.audience === aud && n.state === 'unread').length;
+  const home = res ? '#/r/home' : '#/p/overview';
   app.innerHTML = `<div class="pv">
     <a class="skip" href="#view">Skip to content</a>
-    <aside class="sb" id="sidebar" aria-label="Provider navigation">
+    <aside class="sb" id="sidebar" aria-label="${res ? 'Resident' : 'Provider'} navigation">
       <div class="sb-top">
-        <a href="#/p/overview" class="sb-logo" aria-label="SAMAR-AGOS overview">${logoMark(32)}<span class="sb-brand"><strong>SAMAR-AGOS</strong><span>Water Operations</span></span></a>
+        <a href="${home}" class="sb-logo" aria-label="SAMAR-AGOS ${res ? 'home' : 'overview'}">${logoMark(32)}<span class="sb-brand"><strong>SAMAR-AGOS</strong><span>${res ? 'Resident Portal' : 'Water Operations'}</span></span></a>
         <div class="sb-scene">${cityScene()}</div>
       </div>
       <nav class="sb-nav">
-        ${PRO_NAV.map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
+        ${(res ? RES_NAV : PRO_NAV).map((g) => `<div class="sb-group"><div class="sb-gl">${g.group}</div>${g.items.map((n) => {
           const c = n.count ? n.count() : null;
-          return `<a href="#/p/${n.id}" class="sb-a ${page === n.id ? 'is-active' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
+          return `<a href="#/${area}/${n.id}" class="sb-a ${page === n.id ? 'is-active' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
         }).join('')}</div>`).join('')}
       </nav>
     </aside>
@@ -423,27 +405,30 @@ function renderProviderShell(page, view, html) {
       <header class="tb">
         <button class="icon-btn tb-menu" data-action="sb-open" aria-label="Open navigation">${icon('menu', 20)}</button>
         <div class="tb-mlogo">${logoMark(28)}</div>
-        <div class="tb-fresh" id="tb-fresh">${freshness()}</div>
+        ${res ? '' : `<div class="tb-fresh" id="tb-fresh">${freshness()}</div>`}
         <div class="tb-right">
           <span id="tb-status">${headerStatus()}</span>
-          <button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>
-          <a href="#/p/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
-          ${accountMenu()}
+          ${res ? '' : `<button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>`}
+          <a href="#/${area}/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
+          ${accountMenu(res)}
         </div>
       </header>
-      <main id="view" class="pv-content scroll-root" tabindex="-1">${html}</main>
+      <main id="view" class="pv-content ${res ? 'pv-content--res' : ''} scroll-root" tabindex="-1">${html}</main>
     </div>
   </div>`;
 }
 
-function accountMenu() {
+function accountMenu(res) {
+  const user = res ? RESIDENT : PROVIDER_USER;
   const email = B.FB_ENABLED ? B.getSession()?.email : '';
+  const av = `<span class="avatar ${res ? '' : 'avatar--navy'}">${user.initials}</span>`;
   return `<details class="acct">
-    <summary class="acct-btn" aria-label="Account menu for ${esc(PROVIDER_USER.name)}"><span class="avatar avatar--navy">${PROVIDER_USER.initials}</span>${icon('chev-d', 14)}</summary>
+    <summary class="acct-btn" aria-label="Account menu for ${esc(user.name)}">${av}${icon('chev-d', 14)}</summary>
     <div class="acct-menu">
-      <div class="acct-head"><span class="avatar avatar--navy">${PROVIDER_USER.initials}</span><span><strong>${esc(PROVIDER_USER.name)}</strong><span>${esc(email || PROVIDER_USER.role)}</span></span></div>
-      <button data-action="switch-role">${icon('home', 16)}<span>Resident view</span></button>
-      ${B.FB_ENABLED ? `<button data-action="team-open">${icon('users', 16)}<span>Staff access</span></button>` : ''}
+      <div class="acct-head">${av}<span><strong>${esc(user.name)}</strong><span>${esc(email || (res ? user.address : user.role))}</span></span></div>
+      ${res ? `<a href="#/r/profile">${icon('user', 16)}<span>Profile</span></a>` : ''}
+      ${canSwitchRole() ? `<button data-action="switch-role">${icon(res ? 'activity' : 'home', 16)}<span>${res ? 'Provider view' : 'Resident view'}</span></button>` : ''}
+      ${!res && B.FB_ENABLED ? `<button data-action="team-open">${icon('users', 16)}<span>Staff access</span></button>` : ''}
       <button data-action="logout" class="acct-out">${icon('logout', 16)}<span>Sign out</span></button>
     </div>
   </details>`;
@@ -463,6 +448,11 @@ function freshness() {
   return `<span class="live-dot" aria-hidden="true"></span><span class="src src--sim">SIMULATED TELEMETRY</span><span class="tb-upd"><span class="tb-upd-l">Last update: </span><span class="upd" data-ts="${t.lastUpdate}">${relTime(t.lastUpdate)}</span></span><span class="tb-acc" title="Each 3-second update advances the simulation by 5 minutes">· accelerated time ×100</span>`;
 }
 function headerStatus() {
+  if (current?.area === 'r') {
+    const r = S.residentService();
+    const label = r.label.charAt(0) + r.label.slice(1).toLowerCase();
+    return `<a href="#/r/home" class="tb-sys" title="Service status for your area">${status(r.sev, `Zone ${esc(RESIDENT.zone)} · ${esc(label)}`)}</a>`;
+  }
   const o = S.overallStatus();
   const label = { normal: 'System Normal', warning: 'System Warning', critical: 'System Critical', offline: 'Data Unavailable' }[o.sev];
   return `<a href="#/p/overview" class="tb-sys">${status(o.sev, label)}</a>`;
@@ -596,14 +586,6 @@ register({
   },
   'sb-open': () => document.querySelector('.pv')?.classList.add('sb-open'),
   'sb-close': () => document.querySelector('.pv')?.classList.remove('sb-open'),
-  'res-more': () => {
-    openDrawer(
-      'More',
-      `<nav class="more-list">${RES_NAV.filter((n) => !['home', 'advisories', 'report', 'reports'].includes(n.id))
-        .map((n) => `<a href="#/r/${n.id}">${icon(n.icon, 20)}<span>${n.label}</span>${icon('chev-r', 18)}</a>`)
-        .join('')}${canSwitchRole() ? `<button data-action="switch-role">${icon('activity', 20)}<span>Switch to provider view</span>${icon('chev-r', 18)}</button>` : ''}<button data-action="logout">${icon('logout', 20)}<span>Sign out</span>${icon('chev-r', 18)}</button></nav>`
-    );
-  },
   'demo-panel': () => openDemoPanel(),
   'apply-scenario': (el) =>
     busy(el, async () => {

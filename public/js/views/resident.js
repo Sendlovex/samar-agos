@@ -34,20 +34,20 @@ function progressMini(r) {
 }
 
 const OUTLOOK = {
-  stable: { sev: 'normal', label: 'Stable', text: 'Expected water supply is sufficient based on current storage, production, and estimated demand.' },
-  watch: { sev: 'info', label: 'Stable — being monitored', text: 'Supply is expected to remain available. The provider is monitoring storage levels closely.' },
-  risk: { sev: 'warning', label: 'Possible Supply Interruptions', text: 'Based on current conditions, supply may become limited within the next 24 hours. Consider storing water for essential needs.' },
-  critical: { sev: 'critical', label: 'Supply Interruptions Likely', text: 'Based on current conditions, supply may become limited within hours. Store water for drinking and cooking.' },
+  stable: { sev: 'normal', label: 'Enough water', text: 'There should be enough water for your area over the next day.' },
+  watch: { sev: 'info', label: 'Enough water for now', text: 'There should be enough water. Your water provider is keeping a close eye on supply.' },
+  risk: { sev: 'warning', label: 'Water may run low', text: 'Water may run low within the next day. Consider storing some for drinking and cooking.' },
+  critical: { sev: 'critical', label: 'Water likely to run low', text: 'Water may run low within a few hours. Store water now for drinking and cooking.' },
 };
 
 function outlookStrip(fc) {
   const segs = [
     ['Now', fc.now],
-    ['+6 h', fc.at6],
-    ['+12 h', fc.at12],
-    ['+24 h', fc.at24],
+    ['In 6 hrs', fc.at6],
+    ['In 12 hrs', fc.at12],
+    ['Tomorrow', fc.at24],
   ];
-  const lv = (p) => (p < 0.3 ? ['critical', 'Low'] : p < 0.42 ? ['warning', 'Limited'] : p < 0.5 ? ['info', 'Adequate'] : ['normal', 'Good']);
+  const lv = (p) => (p < 0.3 ? ['critical', 'Low'] : p < 0.42 ? ['warning', 'Limited'] : p < 0.5 ? ['info', 'Enough'] : ['normal', 'Plenty']);
   return `<ol class="ostrip">${segs
     .map(([t, p]) => {
       const [sev, word] = lv(p);
@@ -74,119 +74,138 @@ function advisoryCard(a, { compact = false } = {}) {
 }
 
 // ---------------------------------------------------------------- HOME
+// Written for residents, not engineers: answer "Do I have water?", "What should I do?" and
+// "How do I get help?" in everyday words. Same cards and tokens as the operator portal.
+const brgyName = (b) => (/^barangay\b/i.test(b) ? b : `Barangay ${b}`);
+const titleCase = (t) => t.charAt(0) + t.slice(1).toLowerCase();
+
+// Plain-language headline for each service state the provider can publish.
+const FRIENDLY = {
+  'NORMAL SERVICE': ['Your water is working normally', 'No problems have been reported in your area.'],
+  'SERVICE RESTORED': ['Your water is back', 'The problem in your area has been fixed.'],
+  'REDUCED PRESSURE': ['Water pressure is low in your area', 'Water may come out weakly, especially upstairs.'],
+  'NO WATER': ['No water in your area right now', 'Your water provider is working to bring it back.'],
+  'INTERMITTENT SUPPLY': ['Water is on and off in your area', 'You may have water only at certain times.'],
+  'QUALITY ADVISORY': ['Take care before drinking tap water', 'Please follow the advice from your water provider below.'],
+  'SCHEDULED MAINTENANCE': ['Planned repair work in your area', 'Water may be off for a while during the work.'],
+  'SUPPLY WARNING': ['Water may run low soon', 'Your water provider is asking residents to use water wisely.'],
+  'UNDER INVESTIGATION': ["We're checking a problem in your area", "We'll post an update once we know more."],
+  'REPORTS UNDER REVIEW': ['Neighbors reported a water problem', 'Your water provider is looking into it.'],
+};
+
+// Simple 4-step tracker shown while a problem is being handled.
+const FIX_STEPS = ['Problem reported', 'Being checked', 'Repair underway', 'Water restored'];
+function fixStep(svc) {
+  if (svc.restored) return 3;
+  const inc = svc.incident;
+  if (!inc) return svc.label === 'REPORTS UNDER REVIEW' ? 0 : -1;
+  return { Investigating: 1, 'Response in Progress': 2, Monitoring: 2, Resolved: 3 }[inc.status] ?? 1;
+}
+
 function homeStatus() {
   const s = st();
   const svc = S.residentService(s);
-  const z = myZone();
-  const sevCls = SEV[svc.sev].cls;
-  let expect = '';
-  if (svc.advisory && !svc.restored) {
-    expect = svc.etr
-      ? `<div class="hs-exp"><span>Estimated Restoration</span><strong>${fmtTime(svc.etr)}</strong><em>${src('ESTIMATED')} provided by your water provider</em></div>`
-      : svc.nextUpdate
-        ? `<div class="hs-exp"><span>Next update expected</span><strong>${fmtTime(svc.nextUpdate)}</strong><em>Restoration time not yet confirmed</em></div>`
-        : '';
-  }
-  return `<section class="hs hs--${sevCls}" aria-labelledby="hs-title">
-    <div class="hs-top">
-      <div><div class="hs-k">Your Area</div><div class="hs-area">Barangay ${esc(RESIDENT.barangay)}</div><div class="hs-zone">${esc(z.name)}</div></div>
-      <div class="hs-ic">${icon(SEV[svc.sev].icon, 28)}</div>
+  const [headline, fallback] = FRIENDLY[svc.label] || [titleCase(svc.label), ''];
+  const cls = SEV[svc.sev].cls;
+  const fromProvider = svc.advisory && !svc.restored;
+  const step = fixStep(svc);
+  let when = '';
+  if (fromProvider && svc.etr) when = `<div class="ws-when">${icon('clock', 18)}<div><span>Water expected back by</span><strong>${fmtTime(svc.etr)}</strong><em>This is an estimate and may change.</em></div></div>`;
+  else if (fromProvider && svc.nextUpdate) when = `<div class="ws-when">${icon('clock', 18)}<div><span>Next update by</span><strong>${fmtTime(svc.nextUpdate)}</strong><em>We don't know yet when water will be back.</em></div></div>`;
+  return `<section class="ws ws--${cls}" aria-labelledby="ws-title">
+    <div class="ws-main">
+      <div class="ws-txt">
+        <h2 id="ws-title" class="ws-h"><span class="sys-dot sys-dot--${cls}" aria-hidden="true"></span>${esc(headline)}</h2>
+        <p class="ws-p">${esc(fromProvider ? svc.message : fallback || svc.message)}</p>
+        ${fromProvider ? `<p class="ws-by">${icon('megaphone', 14)} Message from ${esc(UTILITY.name)}</p>` : ''}
+      </div>
     </div>
-    <div class="hs-k">Current Service</div>
-    <h1 id="hs-title" class="hs-status">${esc(svc.label)}</h1>
-    <div class="hs-upd">${icon('clock', 14)} Updated ${updatedAgo(svc.updatedAt)}</div>
-    <p class="hs-msg">${esc(svc.message)}</p>
-    ${svc.team ? `<div class="hs-team">${icon('users', 16)} ${esc(svc.team)}</div>` : ''}
-    ${expect}
-    <div class="hs-actions">
-      ${svc.advisory ? `<a class="btn btn--light" href="#/r/advisories">${icon('megaphone', 16)} View Advisory</a>` : ''}
-      <a class="btn btn--light" href="#/r/report">${icon('plus', 16)} Report a Problem</a>
-      <a class="btn btn--light" href="#/r/reports">${icon('clipboard', 16)} Track My Reports</a>
-    </div>
+    ${when}
+    ${step >= 0 ? `<ol class="ws-steps" aria-label="Repair progress: ${esc(FIX_STEPS[step])}">${FIX_STEPS.map((t, i) => `<li class="${i < step ? 'is-done' : i === step ? 'is-now' : ''}"><span class="ws-dot">${i < step || (i === step && step === 3) ? icon('check', 12) : ''}</span><span>${t}</span></li>`).join('')}</ol>` : ''}
+    <div class="ws-upd">${icon('refresh', 13)} Checked ${updatedAgo(svc.updatedAt)}</div>
   </section>`;
+}
+
+// "What you can do" — short, concrete tips for the current situation.
+function homeTips() {
+  const s = st();
+  const svc = S.residentService(s);
+  const out = S.forecast({ hours: 24 }).status;
+  const alt = s.altWater.filter((p) => p.active && p.zone === RESIDENT.zone && p.status !== 'CLOSED');
+  const tips = [];
+  const problem = svc.sev !== 'normal' && !svc.restored;
+  if (svc.label === 'QUALITY ADVISORY') tips.push('Use boiled or bottled water for drinking and cooking until the advisory ends.');
+  else if (problem) tips.push('Save stored water for drinking, cooking and washing hands.');
+  if (svc.label === 'NO WATER' || svc.label === 'INTERMITTENT SUPPLY') tips.push('Keep faucets closed so water doesn\'t run when it comes back.');
+  if (svc.advisory?.instructions && !svc.restored) tips.push(esc(svc.advisory.instructions));
+  if (problem && alt.length) tips.push(`Get water at <a href="#/r/water-access">${esc(alt[0].name)}</a> (${esc(alt[0].hours)}).`);
+  if (!problem && (out === 'risk' || out === 'critical')) tips.push('Water may be limited later today. Store some water now for essential needs.');
+  if (svc.restored) tips.push('Let the water run for a minute before using it.', 'Still no water? <a href="#/r/reports">Tell us in My Reports</a>.');
+  if (!tips.length) tips.push("Nothing to do right now. We'll notify you if anything changes.");
+  if (!problem) tips.push('Notice a problem? <a href="#/r/report">Report it</a>. It only takes a minute.');
+  return card('What you can do', `<ul class="tips">${tips.map((t) => `<li>${t}</li>`).join('')}</ul>`);
 }
 
 function homeOutlook() {
   const fc = S.forecast({ hours: 24 });
   const o = OUTLOOK[fc.status];
   return card(
-    'Water Availability Outlook',
-    `<div class="ol-h"><div><div class="ol-k">Next 24 Hours</div><div class="ol-s">${status(o.sev, o.label, { lg: true })}</div></div>${src('FORECAST')}</div>
+    'Next 24 hours',
+    `<p class="ol-big">${status(o.sev, o.label, { lg: true })}</p>
      <p class="ol-t">${o.text}</p>${outlookStrip(fc)}
-     <p class="fine">Based on current conditions. Forecasts are estimates and may change. <a href="#/r/outlook">See full outlook</a></p>`,
-    { cls: 'card--outlook' }
+     <p class="fine">This is a forecast and may change. <a href="#/r/outlook">See more</a></p>`,
+    { cls: 'card--outlook', sub: 'Will there be enough water?' }
   );
 }
 
 function homeLatest() {
   const s = st();
-  const mine = s.reports.filter((r) => r.mine).sort((a, b) => b.submittedAt - a.submittedAt);
-  const r = mine[0];
-  if (!r) return card('My Latest Report', empty('No reports yet', 'Report water problems in your area so your provider can investigate.', 'clipboard', '<a class="btn btn--primary btn--sm" href="#/r/report">Report a Problem</a>'));
+  const r = s.reports.filter((x) => x.mine).sort((a, b) => b.submittedAt - a.submittedAt)[0];
+  if (!r) return '';
   const rs = residentReportStatus(r);
   const last = r.updates[r.updates.length - 1];
   return card(
-    'My Latest Report',
+    'Your latest report',
     `<a class="rep-row" href="#/r/reports/${r.id}">
-      <div class="rep-row-h"><span class="mono">${r.id}</span>${status(rs.sev, rs.label)}</div>
-      <div class="rep-row-t">${esc(reportTypeLabel(r.type))}</div>
+      <div class="rep-row-h"><strong>${esc(reportTypeLabel(r.type))}</strong>${status(rs.sev, rs.label)}</div>
       ${progressMini(r)}
-      <dl class="kv kv--2"><div><dt>Submitted</dt><dd>${fmtDateTime(r.submittedAt)}</dd></div><div><dt>Latest update</dt><dd>${last ? relTime(last.at) : '—'}</dd></div></dl>
-      ${last ? `<p class="rep-row-u">${esc(last.text)}</p>` : ''}
-      ${rs.label === 'Awaiting Your Confirmation' ? `<div class="banner banner--info sm">${icon('info', 16)}<div class="banner-c"><strong>Has your water service returned?</strong> Tap to confirm.</div></div>` : ''}
+      ${last ? `<p class="rep-row-u">${esc(last.text)} <span class="muted">· ${relTime(last.at)}</span></p>` : ''}
+      ${rs.label === 'Awaiting Your Confirmation' ? `<div class="banner banner--info sm">${icon('info', 16)}<div class="banner-c"><strong>Is your water back?</strong> Tap here to tell us.</div></div>` : ''}
     </a>`,
-    { actions: `<a class="link" href="#/r/reports">All reports ${icon('chev-r', 14)}</a>` }
+    { actions: `<a class="link" href="#/r/reports">All my reports ${icon('chev-r', 14)}</a>` }
   );
 }
 
 const home = {
   title: 'My Water Service',
-  regions: { status: homeStatus, outlook: homeOutlook },
+  regions: { status: homeStatus, tips: homeTips, outlook: homeOutlook },
   render() {
     const s = st();
     const adv = s.advisories.filter((a) => a.status === 'Active' && a.areas.includes(RESIDENT.zone));
-    const svc = S.residentService(s);
-    const disruption = svc.sev !== 'normal' || adv.length;
-    const alt = s.altWater.filter((p) => p.active && p.zone === RESIDENT.zone && p.status !== 'CLOSED');
+    const h = new Date().getHours();
+    const hello = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
     return `<div class="r-page">
-      <div class="r-greet">Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'}, ${esc(RESIDENT.name.split(' ')[0])}</div>
+      <div class="page-h"><div><h1>${hello}, ${esc(RESIDENT.name.split(' ')[0])}</h1><p class="page-sub">${icon('pin', 14)} Water service for ${esc(brgyName(RESIDENT.barangay))}</p></div></div>
       <div data-region="status">${homeStatus()}</div>
       <div class="r-grid">
-        <div class="r-col">
-          ${card(
-            'Active Advisory',
-            adv.length ? adv.map((a) => advisoryCard(a)).join('') : empty('No active advisories for your area', 'You will be notified when your provider publishes an advisory.', 'megaphone'),
-            { actions: `<a class="link" href="#/r/advisories">All advisories ${icon('chev-r', 14)}</a>` }
-          )}
-          ${card(
-            'Report a problem quickly',
-            `<div class="qa">${[
-              ['no_water', 'No Water', 'droplet-off'],
-              ['low_pressure', 'Low Pressure', 'gauge'],
-              ['leak', 'Pipe Leak', 'droplets'],
-              ['color', 'Water Quality Concern', 'flask'],
-            ]
-              .map(([id, l, ic]) => `<button class="qa-b" data-action="quick-report" data-type="${id}">${icon(ic, 22)}<span>${l}</span></button>`)
-              .join('')}</div>`
-          )}
-        </div>
-        <div class="r-col">
-          ${homeLatest()}
-          <div data-region="outlook">${homeOutlook()}</div>
-          ${
-            disruption && alt.length
-              ? card(
-                  'Alternative Water Access',
-                  `<ul class="mini-list">${alt
-                    .slice(0, 2)
-                    .map((p) => `<li><div><strong>${esc(p.name)}</strong><span>${esc(p.hours)} · confirmed ${relTime(p.confirmedAt)}</span></div>${altStatus(p.status)}</li>`)
-                    .join('')}</ul>`,
-                  { actions: `<a class="link" href="#/r/water-access">View all ${icon('chev-r', 14)}</a>` }
-                )
-              : ''
-          }
-        </div>
+        <div data-region="tips">${homeTips()}</div>
+        <div data-region="outlook">${homeOutlook()}</div>
       </div>
+      ${card(
+        'Having a water problem?',
+        `<div class="qa">${[
+          ['no_water', 'No water', 'droplet-off'],
+          ['low_pressure', 'Weak water flow', 'gauge'],
+          ['leak', 'Leaking pipe', 'droplets'],
+          ['color', 'Dirty or smelly water', 'flask'],
+          ['other', 'Something else', 'more'],
+        ]
+          .map(([id, l, ic]) => `<button class="qa-b" data-action="quick-report" data-type="${id}"><span class="qa-ic">${icon(ic, 20)}</span><span>${l}</span></button>`)
+          .join('')}</div>`,
+        { sub: 'Tap what you see. We\'ll guide you through the rest.', cls: 'card--qa' }
+      )}
+      ${adv.length ? card(adv.length > 1 ? 'Notices for your area' : 'Notice for your area', adv.map((a) => advisoryCard(a)).join(''), { actions: `<a class="link" href="#/r/advisories">All notices ${icon('chev-r', 14)}</a>` }) : ''}
+      ${homeLatest()}
     </div>`;
   },
 };
