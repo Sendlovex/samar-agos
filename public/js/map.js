@@ -97,7 +97,7 @@ export function renderMap(opts = {}) {
       const [lx, ly] = z.label;
       g += `<g class="zlabel" pointer-events="none"><text x="${lx}" y="${ly}" class="map-zone">${esc(z.short.toUpperCase())}</text>`;
       if (mode === 'provider') g += `<text x="${lx}" y="${ly + 16}" class="map-zone-sub" fill="${zt.status === 'normal' ? '#475569' : COL[zt.status]}">${zt.pressure.toFixed(0)} PSI${zt.status !== 'normal' ? ' ▼' : ''}</text>`;
-      else g += `<text x="${lx}" y="${ly + 16}" class="map-zone-sub">${esc(z.barangays.slice(0, 2).join(' · '))}</text>`;
+      else g += `<text x="${lx}" y="${ly + 16}" class="map-zone-sub">${esc(z.barangays.slice(0, 2).join(', '))}</text>`;
       g += '</g>';
     });
   else ZONES.forEach((z) => (g += `<text x="${z.label[0]}" y="${z.label[1]}" class="map-zone" pointer-events="none">${esc(z.short.toUpperCase())}</text>`));
@@ -158,7 +158,7 @@ export function renderMap(opts = {}) {
     mode === 'provider' && opts.toggles !== false
       ? `<div class="map-layers" role="group" aria-label="Map layers">${icon_layers()}${LAYERS.map((l) => `<label class="chk-chip"><input type="checkbox" data-change="map-layer" value="${l.id}" ${layers.has(l.id) ? 'checked' : ''}/> ${l.label}</label>`).join('')}</div>`
       : '';
-  return `<div class="map ${opts.compact ? 'map--compact' : ''}">${toggles}<div class="map-canvas"><svg viewBox="0 0 1000 620" class="map-svg ${mode === 'picker' && !opts.readonly ? 'map-svg--pick' : ''}" ${mode === 'picker' && !opts.readonly ? 'data-action="map-pick"' : ''} role="${mode === 'picker' && !opts.readonly ? 'application' : 'img'}" aria-label="${mode === 'picker' && !opts.readonly ? 'Tap the map to set the problem location' : 'Schematic service area map'}">${g}</svg><div class="map-note">Schematic map · barangay boundaries from OpenStreetMap</div></div>${legend}</div>`;
+  return `<div class="map ${opts.compact ? 'map--compact' : ''}">${toggles}<div class="map-canvas"><svg viewBox="0 0 1000 620" class="map-svg ${mode === 'picker' && !opts.readonly ? 'map-svg--pick' : ''}" ${mode === 'picker' && !opts.readonly ? 'data-action="map-pick"' : ''} role="${mode === 'picker' && !opts.readonly ? 'application' : 'img'}" aria-label="${mode === 'picker' && !opts.readonly ? 'Tap the map to set the problem location' : 'Schematic service area map'}">${g}</svg><div class="map-note">Schematic map, barangay boundaries from OpenStreetMap</div></div>${legend}</div>`;
 }
 
 function icon_layers() {

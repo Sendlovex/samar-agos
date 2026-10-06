@@ -1,10 +1,9 @@
-// Provider: Shortage early warning (forecast) and Response Simulator.
+// Provider: Shortage early warning (forecast).
 import * as S from '../store.js';
-import { icon, status, src, card, kpi, empty, register, registerInputs, alertBanner, openModal, closeOverlay, field, SEV } from '../ui.js';
+import { icon, src, card, kpi, empty, register, SEV } from '../ui.js';
 import { lineChart, barChart } from '../charts.js';
-import { esc, fmt, fmtL, fmtTime, hoursLabel, relTime } from '../util.js';
+import { esc, fmt, fmtTime, hoursLabel } from '../util.js';
 import { weatherState, dayImpacts, describe as wxDescribe, wIcon, WEATHER_BASE } from '../weather.js';
-import { go } from '../app.js';
 
 const st = () => S.getState();
 const pct = (v) => `${Math.round(v * 100)}%`;
@@ -172,7 +171,7 @@ function forecastMain() {
   ${card(
     warn ? 'Why this warning appeared' : fc.status === 'watch' ? 'Why storage is declining' : 'Why the outlook is stable',
     `<div class="fc-why"><ol class="why">${reasons.map((r) => `<li><span class="why-n" aria-hidden="true"></span><span>${esc(r)}</span></li>`).join('')}</ol>
-    <div class="fc-actions"><a class="btn btn--primary btn--sm" href="#/p/simulator">${icon('sliders', 15)} Test responses in simulator</a>${warn ? `<a class="btn btn--outline btn--sm" href="#/p/advisories">${icon('megaphone', 15)} Prepare advisory</a>` : ''}</div></div>
+    <div class="fc-actions">${warn ? `<a class="btn btn--outline btn--sm" href="#/p/advisories">${icon('megaphone', 15)} Prepare advisory</a>` : ''}</div></div>
     <p class="fine">Forecasts are projections based on current conditions${S.weatherActive() ? ' and the weather outlook' : ''}. They are not guaranteed.</p>`
   )}
   ${card('Storage trend and forecast', historyAndForecast(fc, 'fc-main'), { sub: `Poblacion 13 reservoir level, past 24 hours (simulated) and next 48 hours (forecast)${S.forecastBand() ? '. Shaded area shows the likely range from past forecast errors.' : ''}` })}
@@ -261,194 +260,4 @@ const forecastView = {
   },
 };
 
-// ---------------------------------------------------------------- SIMULATOR
-const SIM0 = { prodDelta: 0, backup: false, emergencyL: 0, reducePct: 0, restorePumps: false, inflowPct: 0, demandPct: 0 };
-let sim = { ...SIM0 };
-let simInc = null;
-let simLabel = 'Custom response';
-
-const CONTROLS = [
-  { k: 'prodDelta', label: 'Increase production', unit: 'ML/day', min: 0, max: 3, step: 0.1, desc: 'Additional treated-water output from existing sources.' },
-  { k: 'emergencyL', label: 'Add tanker water', unit: 'L', min: 0, max: 200000, step: 5000, desc: 'Water delivered by tankers into the system.' },
-  { k: 'reducePct', label: 'Reduce distribution', unit: '%', min: 0, max: 30, step: 1, desc: 'Pressure management or scheduled supply rotation.' },
-  { k: 'inflowPct', label: 'Change raw-water inflow', unit: '%', min: -50, max: 30, step: 1, desc: 'Change in spring and Antiao River yield.' },
-  { k: 'demandPct', label: 'Change expected demand', unit: '%', min: -30, max: 40, step: 1, desc: 'Test higher or lower demand assumptions.' },
-];
-
-function scenarioCard(title, sub, fc, base, color, tone) {
-  const pts = fc.pts.filter((p) => p.h <= 72);
-  const chart = lineChart({
-    id: `sim-${tone}`,
-    label: `${title} storage projection`,
-    series: [{ name: title, color, values: pts.map((p) => p.pct * 100), area: true, dash: tone === 'b', endLabel: true }],
-    labels: pts.map((p) => `+${p.h} h`),
-    xTicks: [0, 24, 48, 72].map((h) => ({ i: pts.findIndex((p) => p.h >= h), label: h ? `+${h} h` : 'Now' })),
-    thresholds: [{ y: S.MIN_RESERVE * 100, label: 'Min. reserve', color: '#C0262D' }],
-    yMin: 0,
-    yMax: 100,
-    yFmt: (v) => `${Math.round(v)}%`,
-    h: 170,
-  });
-  const gain = base && fc.crossH !== base.crossH ? (fc.crossH ?? 72) - (base.crossH ?? 72) : null;
-  return `<section class="scn-card scn-card--${tone}">
-    <div class="scn-card-h"><span class="scn-tag">${tone === 'a' ? 'Scenario A' : 'Scenario B'}</span><strong>${esc(title)}</strong><span class="muted sm">${esc(sub)}</span></div>
-    <div class="scn-metrics">
-      <div><span>Reserve threshold reached in</span><strong>${fc.crossH != null ? hoursLabel(fc.crossH) : '> 72 hours'}</strong></div>
-      <div><span>Storage at 24 h</span><strong>${pct(fc.at24)}</strong></div>
-      <div><span>Lowest level (72 h)</span><strong>${pct(fc.minPct)}</strong></div>
-    </div>
-    ${gain != null ? `<div class="scn-gain ${gain > 0 ? 'up' : 'down'}">${icon(gain > 0 ? 'arrow-up' : 'arrow-down', 15)} ${gain > 0 ? '+' : ''}${fmt(gain, 0)} hours estimated service buffer${fc.crossH == null ? ' (no crossing within 72 h)' : ''}</div>` : tone === 'b' ? `<div class="scn-gain">No change from Scenario A</div>` : `<div class="scn-gain">Baseline for comparison</div>`}
-    ${chart}
-  </section>`;
-}
-
-function simResults() {
-  const a = S.forecast({ hours: 72 });
-  const b = S.forecast({ hours: 72, ...sim });
-  const changed = JSON.stringify(sim) !== JSON.stringify(SIM0);
-  return `<div class="scn-pair">${scenarioCard('No Action', 'Current conditions continue', a, null, '#0B2545', 'a')}${scenarioCard(changed ? simLabel : 'Adjust controls to compare', changed ? describe() : 'Same as Scenario A', b, a, '#1D6FB8', 'b')}</div>
-  <div class="sim-sum">${icon('info', 16)}<p>${
-    a.crossH == null && b.crossH == null
-      ? 'Based on current conditions, neither scenario reaches the minimum reserve within 72 hours.'
-      : b.crossH == null
-        ? `This response keeps storage above the minimum reserve for at least 72 hours (vs. ${hoursLabel(a.crossH)} with no action).`
-        : `With this response, minimum reserve may be reached in approximately ${hoursLabel(b.crossH)} (vs. ${a.crossH != null ? hoursLabel(a.crossH) : 'more than 72 hours'} with no action).`
-  } Estimates only — results depend on actual demand and equipment performance.</p></div>`;
-}
-
-function describe() {
-  const parts = [];
-  if (sim.prodDelta) parts.push(`+${fmt(sim.prodDelta, 2)} ML/day production`);
-  if (sim.backup) parts.push('backup source on');
-  if (sim.emergencyL) parts.push(`${fmtL(sim.emergencyL)} emergency water`);
-  if (sim.reducePct) parts.push(`distribution −${sim.reducePct}%`);
-  if (sim.restorePumps) parts.push('failed pump restored');
-  if (sim.inflowPct) parts.push(`inflow ${sim.inflowPct > 0 ? '+' : ''}${sim.inflowPct}%`);
-  if (sim.demandPct) parts.push(`demand ${sim.demandPct > 0 ? '+' : ''}${sim.demandPct}%`);
-  return parts.join('; ');
-}
-
-function baseline() {
-  const s = st();
-  const fc = S.forecast({ hours: 72 });
-  return `<div class="base">
-    <div><span>Current storage</span><strong>${pct(fc.now)}</strong>${src('SIMULATED')}</div>
-    <div><span>Demand</span><strong>${fmt(s.tele.demand, 2)} <small>ML/day</small></strong>${src('ESTIMATED')}</div>
-    <div><span>Production capacity</span><strong>${fmt(S.productionCapacity(), 2)} <small>ML/day</small></strong>${src('SIMULATED')}</div>
-    <div><span>Reserve threshold (no action)</span><strong>${fc.crossH != null ? hoursLabel(fc.crossH) : '> 72 h'}</strong>${src('FORECAST')}</div>
-    <div><span>Active conditions</span><strong class="sm">${s.activeScenarios.length ? s.activeScenarios.length + ' scenario(s)' : Object.keys(s.zoneIssues).length ? 'Zone issue' : 'Normal'}</strong></div>
-  </div>`;
-}
-
-function controlsHtml() {
-  const s = st();
-  const pumpDown = s.pumpsOffline.some((id) => id.startsWith('PS-CAR'));
-  return `<div class="ctl-list">
-    ${CONTROLS.map(
-      (c) => `<div class="ctl"><div class="ctl-h"><label for="sim-${c.k}">${c.label}</label><span class="ctl-v"><input type="number" id="sim-${c.k}-n" aria-label="${c.label} value" value="${sim[c.k]}" min="${c.min}" max="${c.max}" step="${c.step}" data-input="sim" data-k="${c.k}"/><em>${c.unit}</em></span></div>
-      <input type="range" id="sim-${c.k}" min="${c.min}" max="${c.max}" step="${c.step}" value="${sim[c.k]}" data-input="sim" data-k="${c.k}"/><p>${c.desc}</p></div>`
-    ).join('')}
-    <label class="switch ctl-sw"><input type="checkbox" ${sim.backup ? 'checked' : ''} data-change="sim-bool" data-k="backup"/><span class="switch-t" aria-hidden="true"></span><span><strong>Activate standby well</strong><em>Piczonville deep well (+6.5 L/s ≈ 0.56 ML/day; on standby due to salinity, CWD WSP 2017)</em></span></label>
-    <label class="switch ctl-sw ${pumpDown ? '' : 'is-dis'}"><input type="checkbox" ${sim.restorePumps ? 'checked' : ''} ${pumpDown ? '' : 'disabled'} data-change="sim-bool" data-k="restorePumps"/><span class="switch-t" aria-hidden="true"></span><span><strong>Restore Caramayon pumps</strong><em>${pumpDown ? 'Caramayon pumping stations back online (+91 L/s)' : 'No pump is currently offline'}</em></span></label>
-  </div>`;
-}
-
-const simulator = {
-  title: 'Response Simulator',
-  regions: { baseline, results: simResults },
-  render() {
-    const s = st();
-    const open = s.incidents.filter((i) => i.status !== 'Resolved');
-    return `<div class="sim-banner" role="note">${icon('sliders', 18)}<strong>SIMULATION — NOT LIVE CONTROL</strong><span>Changing values here does not operate any pump, tank, valve, or other equipment.</span></div>
-      <div class="page-h"><div><h1>Response Simulator</h1><p class="page-sub">Test hypothetical responses before making operational decisions.</p></div>
-      <div class="page-a">${simInc ? `<span class="pill pill--blue">${icon('link', 12)} Context: ${simInc}</span>` : ''}</div></div>
-      ${card('Baseline', `<div data-region="baseline">${baseline()}</div>`, { sub: 'Live simulated conditions — refreshed every update' })}
-      <div class="sim-grid">
-        <section class="card sim-ctl"><header class="card-h"><div><h2 class="card-t">Response options</h2><p class="card-sub">Scenario B inputs</p></div><button class="btn btn--ghost btn--xs" data-action="sim-reset">${icon('refresh', 13)} Reset</button></header>
-          <div class="card-b">
-            <div class="presets"><span class="muted sm">Presets:</span>
-              <button class="chip-btn" data-action="sim-preset" data-p="emergency">Activate Emergency Water</button>
-              <button class="chip-btn" data-action="sim-preset" data-p="pump">Restore failed pump</button>
-              <button class="chip-btn" data-action="sim-preset" data-p="demand">Demand management</button>
-              <button class="chip-btn" data-action="sim-preset" data-p="combined">Combined response</button>
-            </div>
-            <div id="sim-controls">${controlsHtml()}</div>
-          </div></section>
-        <section class="sim-res"><div data-region="results">${simResults()}</div>
-          <div class="sim-next card"><div class="card-b"><strong>Next steps</strong><div class="sim-next-a">
-            <button class="btn btn--outline btn--sm" data-action="sim-attach" ${open.length ? '' : 'disabled'}>${icon('link', 14)} Attach result to incident</button>
-            <button class="btn btn--outline btn--sm" data-action="wo-new" data-inc="${simInc || ''}">${icon('wrench', 14)} Create work order</button>
-            <button class="btn btn--outline btn--sm" data-action="adv-new" data-inc="${simInc || ''}">${icon('megaphone', 14)} Publish advisory</button>
-          </div></div></div>
-        </section>
-      </div>`;
-  },
-};
-
-function refreshResults() {
-  const el = document.querySelector('[data-region="results"]');
-  if (el) el.innerHTML = simResults();
-}
-
-registerInputs({
-  sim: (el) => {
-    const k = el.dataset.k;
-    const c = CONTROLS.find((x) => x.k === k);
-    let v = parseFloat(el.value);
-    if (isNaN(v)) return;
-    v = Math.max(c.min, Math.min(c.max, v));
-    sim[k] = v;
-    simLabel = 'Custom response';
-    const other = el.type === 'range' ? document.getElementById(`sim-${k}-n`) : document.getElementById(`sim-${k}`);
-    if (other) other.value = v;
-    refreshResults();
-  },
-  'sim-bool': (el) => {
-    sim[el.dataset.k] = el.checked;
-    simLabel = 'Custom response';
-    refreshResults();
-  },
-});
-
-register({
-  'sim-reset': () => {
-    sim = { ...SIM0 };
-    document.getElementById('sim-controls').innerHTML = controlsHtml();
-    refreshResults();
-  },
-  'sim-preset': (el) => {
-    const pumpDown = st().pumpsOffline.some((id) => id.startsWith('PS-CAR'));
-    const p = el.dataset.p;
-    sim = { ...SIM0 };
-    if (p === 'emergency') (sim.emergencyL = 100000), (simLabel = 'Activate Emergency Water');
-    if (p === 'pump') (sim.restorePumps = pumpDown), (simLabel = 'Restore Failed Pump');
-    if (p === 'demand') (sim.reducePct = 15), (simLabel = 'Demand Management');
-    if (p === 'combined') Object.assign(sim, { emergencyL: 100000, reducePct: 10, backup: true, restorePumps: pumpDown }), (simLabel = 'Combined Response');
-    if (p === 'pump' && !pumpDown) S.toast('No pump is currently offline — apply the "Caramayon Power Outage" demo scenario to test this', 'info');
-    document.getElementById('sim-controls').innerHTML = controlsHtml();
-    refreshResults();
-  },
-  'sim-from-inc': (el) => {
-    simInc = el.dataset.inc;
-    go('#/p/simulator');
-  },
-  'sim-attach': () => {
-    const s = st();
-    const open = s.incidents.filter((i) => i.status !== 'Resolved');
-    openModal(
-      'Attach simulation result',
-      `<form class="form">${field('Incident', `<select id="sim-inc">${open.map((i) => `<option value="${i.id}" ${i.id === simInc ? 'selected' : ''}>${i.id} — ${esc(i.title)}</option>`).join('')}</select>`, { id: 'sim-inc', req: true })}</form><p class="fine">The scenario summary is added to the incident notes and timeline for decision records.</p>`,
-      { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="sim-attach-do">Attach</button>` }
-    );
-  },
-  'sim-attach-do': () => {
-    const id = document.getElementById('sim-inc').value;
-    const a = S.forecast({ hours: 72 });
-    const b = S.forecast({ hours: 72, ...sim });
-    closeOverlay();
-    S.addIncidentNote(id, `Simulation (not live control): ${simLabel}${describe() ? ` [${describe()}]` : ''}. Reserve threshold: no action ${a.crossH != null ? hoursLabel(a.crossH) : '> 72 h'} → with response ${b.crossH != null ? hoursLabel(b.crossH) : '> 72 h'}.`);
-    simInc = id;
-  },
-});
-
-export const forecastViews = { forecast: forecastView, simulator };
+export const forecastViews = { forecast: forecastView };

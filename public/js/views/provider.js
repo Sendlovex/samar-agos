@@ -51,7 +51,7 @@ function ovKpis() {
       <div class="kpi-top"><span class="kpi-label">Poblacion 13 Reservoir</span>${src('SIMULATED')}</div>
       <div class="kp-main">
         <div><div class="kpi-value kpi-value--xl">${fmt(t.volML, 2)}<span class="kpi-unit">ML</span></div>
-        <div class="kpi-sub">${pct(lvl)} of 440 m³ · 100 m³ firefighting reserve</div></div>
+        <div class="kpi-sub">${pct(lvl)} of 440 m³, 100 m³ firefighting reserve</div></div>
         ${sparkline(every(last(h.level, 144), 4), { color: '#0B2545', w: 132, h: 40, min: 0, max: 1 })}
       </div>
       ${gaugeBar(lvl * 100, { sev: lvlSev, marker: 30 })}
@@ -78,10 +78,10 @@ const overview = {
   render() {
     const s = st();
     const open = s.incidents.filter((i) => i.status !== 'Resolved');
-    return `<div class="page-h"><div><h1>Water Operations</h1><p class="page-sub">${esc(UTILITY.name)} · ${esc(UTILITY.municipality)}</p></div></div>
+    return `<div class="page-h"><div><h1>Water Operations</h1><p class="page-sub">${esc(UTILITY.name)}, ${esc(UTILITY.municipality)}</p></div></div>
       <div data-region="status">${ovStatus()}</div>
       <div data-region="kpis">${ovKpis()}</div>
-      <section class="card ov-map"><header class="card-h"><div><h2 class="card-t">Service Area Map</h2><p class="card-sub">Catbalogan City, Samar · hover for live readings, click for details, scroll or pinch to zoom</p></div></header><div class="card-b card-b--flush">${renderMap({ mode: 'provider', id: 'lm-overview', layers: mapLayers })}</div></section>
+      <section class="card ov-map"><header class="card-h"><div><h2 class="card-t">Service Area Map</h2><p class="card-sub">Catbalogan City, Samar, hover for live readings, click for details, scroll or pinch to zoom</p></div></header><div class="card-b card-b--flush">${renderMap({ mode: 'provider', id: 'lm-overview', layers: mapLayers })}</div></section>
       ${card(
         'Active incidents',
         incidentTable(open),
@@ -367,7 +367,7 @@ const advisories = {
           <div class="kp-main"><div><div class="kpi-value kpi-value--xl">${active.length}</div>
             <div class="kpi-sub">${active.length ? `Reaching about <strong>${fmt(reach)}</strong> connections` : 'No notices currently shown to residents'}</div></div></div>
           ${active.length ? `<ul class="adv-sum">${active.map((a) => `<li>${kindDot(a)}<span>${esc(a.title)}</span><span class="muted">${a.areas.map((z) => zoneById(z).short).join(', ')}</span></li>`).join('')}</ul>` : ''}
-          <div class="kp-foot"><span>${dueNext ? `Next resident update <strong class="mono">${dueNext.id}</strong> · ${fmtTime(dueNext.nextUpdate)}` : 'No updates scheduled'}</span><span class="kp-flag kp-flag--${lateUpdates.length ? 'warn' : 'ok'}">${lateUpdates.length ? `${lateUpdates.length} update${lateUpdates.length > 1 ? 's' : ''} late` : 'Updates on schedule'}</span></div>
+          <div class="kp-foot"><span>${dueNext ? `Next resident update <strong class="mono">${dueNext.id}</strong>, ${fmtTime(dueNext.nextUpdate)}` : 'No updates scheduled'}</span><span class="kp-flag kp-flag--${lateUpdates.length ? 'warn' : 'ok'}">${lateUpdates.length ? `${lateUpdates.length} update${lateUpdates.length > 1 ? 's' : ''} late` : 'Updates on schedule'}</span></div>
         </section>
         ${kpi({ label: 'Barangays affected', value: zones.length, sub: zones.length ? zones.map((z) => zoneById(z).short).join(', ') : 'All barangays normal' })}
         ${kpi({ label: 'Next update due', value: dueNext ? fmtTime(dueNext.nextUpdate) : '—', sub: dueNext ? (dueNext.nextUpdate < now ? `<span class="txt-warn">${inH(dueNext.nextUpdate)}</span>` : inH(dueNext.nextUpdate)) : 'Nothing scheduled', sev: lateUpdates.length ? 'warning' : null })}
@@ -378,7 +378,7 @@ const advisories = {
         <h2 class="sec-t">Active notices</h2>${active.length ? active.map(advCard).join('') : empty('No active advisories', 'Publish one from an incident or with New advisory.', 'megaphone')}
         <h2 class="sec-t">Resolved</h2>${
           past.length
-            ? `<div class="card adv-past">${past.map((a) => `<div class="adv-past-r"><span class="sys-dot sys-dot--ok" aria-hidden="true"></span><div><strong>${esc(a.title)}</strong><span>${esc(a.message)}</span></div><span class="mono padv-id">${a.id}</span><span class="adv-past-t">${a.areas.map((z) => zoneById(z).short).join(', ')} · ${relTime(a.updatedAt)}</span></div>`).join('')}</div>`
+            ? `<div class="card adv-past">${past.map((a) => `<div class="adv-past-r"><span class="sys-dot sys-dot--ok" aria-hidden="true"></span><div><strong>${esc(a.title)}</strong><span>${esc(a.message)}</span></div><span class="mono padv-id">${a.id}</span><span class="adv-past-t">${a.areas.map((z) => zoneById(z).short).join(', ')}, ${relTime(a.updatedAt)}</span></div>`).join('')}</div>`
             : empty('None', '', 'archive')
         }
       </div>
@@ -388,7 +388,7 @@ const advisories = {
           .map((p) => {
             const old = now - p.confirmedAt > STALE;
             return `<div class="awp">
-            <div class="awp-t"><strong>${esc(p.name)}</strong><span>${esc(zoneById(p.zone)?.short || '')} · ${esc(p.hours)}</span>
+            <div class="awp-t"><strong>${esc(p.name)}</strong><span>${esc(zoneById(p.zone)?.short || '')}, ${esc(p.hours)}</span>
               <span class="awp-c ${old ? 'is-old' : ''}">${old ? icon('alert', 12) : ''}Confirmed ${relTime(p.confirmedAt)}</span></div>
             <div class="awp-a"><span class="sys-dot sys-dot--${awDot[p.status] || 'off'}" aria-hidden="true"></span><label class="sr-only" for="awp-${p.id}">Status for ${esc(p.name)}</label><select id="awp-${p.id}" data-change="awp-status" data-id="${p.id}">${Object.keys(awStatus).map((x) => `<option value="${x}" ${x === p.status ? 'selected' : ''}>${awStatus[x]}</option>`).join('')}</select><button class="btn btn--${old ? 'outline' : 'ghost'} btn--xs" data-action="awp-confirm" data-id="${p.id}">Confirm</button><button class="btn btn--ghost btn--xs" data-action="awp-remove" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">Remove</button></div></div>`;
           })
@@ -473,7 +473,7 @@ const assets = {
       return `<div class="kpis kpis--4">
         ${kpi({ label: 'Assets', value: s.assets.length, sub: 'From the CWD Water Safety Plan 2022' })}
         ${kpi({ label: 'Need attention', value: attention.length, sub: attention.length ? attention.map((a) => a.id).slice(0, 4).join(', ') + (attention.length > 4 ? '…' : '') : 'All operating normally', sev: attention.length ? 'warning' : null })}
-        ${kpi({ label: 'Average age', value: dated.length ? fmt(avgAge, 1) : '—', unit: dated.length ? 'years' : '', sub: `${dated.length} of ${lcs.length} with a documented install year · ${late.length} past 75% of design life` })}
+        ${kpi({ label: 'Average age', value: dated.length ? fmt(avgAge, 1) : '—', unit: dated.length ? 'years' : '', sub: `${dated.length} of ${lcs.length} with a documented install year, ${late.length} past 75% of design life` })}
         ${kpi({ label: 'Run hours, last 7 days', value: fmt(run7, 0), unit: 'h', sub: 'Pumps, wells, springs and plant', source: 'SIMULATED' })}
       </div>`;
     },
@@ -498,7 +498,7 @@ const assets = {
           const list = s.assets.filter((a) => c.types.includes(a.type) && (!q || `${a.id} ${a.name} ${a.type}`.toLowerCase().includes(q)));
           if (!list.length) return '';
           return `<section class="card as-sec">
-            <header class="as-sec-h">${assetArt(c.art, 54, 36)}<div><h2>${esc(c.label)}</h2><span>${list.length} asset${list.length > 1 ? 's' : ''} · ${esc(c.blurb)}</span></div></header>
+            <header class="as-sec-h">${assetArt(c.art, 54, 36)}<div><h2>${esc(c.label)}</h2><span>${list.length} asset${list.length > 1 ? 's' : ''}, ${esc(c.blurb)}</span></div></header>
             ${table(
               [
                 { label: 'Asset', render: (a) => `<div class="as-id"><strong class="mono">${a.id}</strong><span>${esc(a.name)}</span></div>` },
@@ -507,7 +507,7 @@ const assets = {
                 { label: 'Condition', render: (a) => dotText(COND_SEV[a.condition] || 'offline', a.condition) },
                 { label: 'Age', render: (a) => { const lc = lcOf(a, s); return lc.known ? `<div class="as-age"><span>${fmt(lc.ageYears, 0)} yrs <small>since ${a.installed}</small></span>${lifeBar(lc)}</div>` : '<span class="as-muted">Not recorded</span>'; } },
                 { label: 'Operating hours', render: (a) => { const lc = lcOf(a, s); return `<div class="as-hrs"><strong>${lc.known ? hrs(lc.totalHours) : '—'}</strong><span>${hrs(lc.last7)} last 7 days</span></div>`; } },
-                { label: 'Next maintenance', render: (a) => (a.nextMaint ? `<span class="${a.nextMaint < Date.now() ? 'txt-warn' : ''}">${fmtDate(a.nextMaint)}${a.nextMaint < Date.now() ? ' · overdue' : ''}</span>` : '<span class="as-muted">Not scheduled</span>') },
+                { label: 'Next maintenance', render: (a) => (a.nextMaint ? `<span class="${a.nextMaint < Date.now() ? 'txt-warn' : ''}">${fmtDate(a.nextMaint)}${a.nextMaint < Date.now() ? ', overdue' : ''}</span>` : '<span class="as-muted">Not scheduled</span>') },
               ],
               list,
               { rowAction: { action: 'goto-asset', key: 'id' } }
@@ -559,7 +559,7 @@ function usageCard(a, s) {
     </div>
     ${lc.known ? `<div class="as-lifeline"><div class="as-lifeline-h"><span>Design life used</span><strong>${Math.round(lc.lifeUsed * 100)}%</strong></div>${lifeBar(lc)}<div class="as-lifeline-s"><span>${a.installed}</span><span>End of typical design life ${a.installed + lc.life}</span></div></div>` : '<p class="fine">The install year for this asset isn’t published in CWD’s Water Safety Plan, so age and lifetime hours aren’t shown.</p>'}
     ${issues}`,
-    { sub: `${a.source || 'Asset registry'} · run hours simulated from typical duty cycles`, actions: src('MANUAL') }
+    { sub: `${a.source || 'Asset registry'}, run hours simulated from typical duty cycles`, actions: src('MANUAL') }
   );
 }
 
@@ -569,7 +569,7 @@ function logCard(a, s) {
   const chart = barChart({
     id: `as-log-${a.id}`,
     label: `${a.id} daily operating hours, last 14 days`,
-    bars: log.map((d, i) => ({ label: i % 2 === log.length % 2 ? '' : new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), value: d.hours, color: d.note === 'Normal operation' ? '#1E3A5F' : '#9AA6B4', tip: `${fmtDate(d.date)} · ${fmt(d.hours, 1)} h${d.note !== 'Normal operation' ? ' · ' + d.note : ''}` })),
+    bars: log.map((d, i) => ({ label: i % 2 === log.length % 2 ? '' : new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), value: d.hours, color: d.note === 'Normal operation' ? '#1E3A5F' : '#9AA6B4', tip: `${fmtDate(d.date)}, ${fmt(d.hours, 1)} h${d.note !== 'Normal operation' ? ', ' + d.note : ''}` })),
     yFmt: (v) => `${fmt(v, 0)} h`,
     yMax: 24,
     h: 170,
@@ -577,7 +577,7 @@ function logCard(a, s) {
   const rows = [...log].reverse().slice(0, 7);
   return card(
     'Operating log',
-    `${chart}<div class="chart-cap">${lc.cycled ? 'Run hours' : 'Hours in service'} per day · grey bars mark days with downtime</div>
+    `${chart}<div class="chart-cap">${lc.cycled ? 'Run hours' : 'Hours in service'} per day, grey bars mark days with downtime</div>
     <div class="tbl-wrap"><table class="tbl as-log"><thead><tr><th>Date</th><th class="num">Hours</th>${lc.cycled ? '<th class="num">Starts</th>' : ''}${log[0].kwh != null ? '<th class="num">Energy</th>' : ''}<th>Notes</th></tr></thead><tbody>${rows
       .map((d, i) => `<tr><td>${i === 0 ? 'Today' : fmtDate(d.date)}</td><td class="num"><strong>${fmt(d.hours, 1)}</strong></td>${lc.cycled ? `<td class="num">${d.starts}</td>` : ''}${d.kwh != null ? `<td class="num">${fmt(d.kwh)} kWh</td>` : ''}<td class="${d.note === 'Normal operation' ? 'as-muted' : ''}">${esc(d.note)}</td></tr>`)
       .join('')}</tbody></table></div>`,
@@ -606,7 +606,7 @@ const assetDetail = {
     if (!a) return empty('Asset not found', '', 'search');
     const wos = s.workOrders.filter((w) => w.assetId === a.id);
     return `<a class="back" href="#/p/assets">${icon('chev-l', 16)} Assets</a>
-      <div class="page-h"><div><div class="mono muted">${a.id}</div><h1>${esc(a.name)}</h1><div class="inc-badges">${esc(a.type)} · ${esc(zoneById(a.zone)?.name || '')}</div></div><div class="page-a"><button class="btn btn--primary btn--sm" data-action="wo-new" data-asset="${a.id}">${icon('wrench', 15)} Create work order</button></div></div>
+      <div class="page-h"><div><div class="mono muted">${a.id}</div><h1>${esc(a.name)}</h1><div class="inc-badges">${esc(a.type)}, ${esc(zoneById(a.zone)?.name || '')}</div></div><div class="page-a"><button class="btn btn--primary btn--sm" data-action="wo-new" data-asset="${a.id}">${icon('wrench', 15)} Create work order</button></div></div>
       <div class="inc-grid"><div class="inc-main">
         ${card('Live status', `<div data-region="live">${this.regions.live({ id })}</div>`)}
         ${card(
@@ -733,18 +733,18 @@ const analytics = {
         ${kpi({ label: 'Resident reports (all)', value: s.reports.length, sub: `${linked} linked to incidents`, source: 'RESIDENT REPORTED' })}
         ${kpi({ label: 'Report-to-incident link rate', value: Math.round((linked / Math.max(1, s.reports.length)) * 100), unit: '%', sub: 'reports used as evidence' })}
         ${kpi({ label: 'Resident-verified restorations', value: verified.length ? `${restored}/${verified.length}` : '—', sub: 'confirmed restored / responses', source: 'RESIDENT REPORTED' })}
-        ${kpi({ label: 'Non-revenue water', value: CWD_FACTS.nrwPct, unit: '%', sub: `${CWD_FACTS.asOf} · ${CWD_FACTS.nrwPctYear}% for 2022 (LWUA data sheet)`, source: 'MANUAL', sev: CWD_FACTS.nrwPct > 20 ? 'warning' : null })}
+        ${kpi({ label: 'Non-revenue water', value: CWD_FACTS.nrwPct, unit: '%', sub: `${CWD_FACTS.asOf}, ${CWD_FACTS.nrwPctYear}% for 2022 (LWUA data sheet)`, source: 'MANUAL', sev: CWD_FACTS.nrwPct > 20 ? 'warning' : null })}
       </div>
       <div class="an-sec"><div><h2>Catbalogan Water District at a glance</h2><p>Published operating figures, ${CWD_FACTS.asOf}</p></div>${src('MANUAL')}</div>
       <div class="ops-grid ops-grid--eq">
-        ${card('Service connections', barChart({ id: 'an-conn', label: 'Active service connections by class', bars: Object.entries(CWD_FACTS.byClass).map(([label, value]) => ({ label: label.replace('/Industrial', ''), value, color: '#1E3A5F', showValue: true })), h: 200 }), { sub: `${fmt(CWD_FACTS.activeConnections)} active of ${fmt(CWD_FACTS.totalConnections)} total · population served ${fmt(CWD_FACTS.populationServed)}` })}
+        ${card('Service connections', barChart({ id: 'an-conn', label: 'Active service connections by class', bars: Object.entries(CWD_FACTS.byClass).map(([label, value]) => ({ label: label.replace('/Industrial', ''), value, color: '#1E3A5F', showValue: true })), h: 200 }), { sub: `${fmt(CWD_FACTS.activeConnections)} active of ${fmt(CWD_FACTS.totalConnections)} total, population served ${fmt(CWD_FACTS.populationServed)}` })}
         ${card('Production and billing', `<dl class="kv kv--2">
           <div><dt>Water produced</dt><dd>${fmt(CWD_FACTS.productionM3Month)} m³ / month</dd></div>
           <div><dt>Water billed</dt><dd>${fmt(CWD_FACTS.billedM3Month)} m³ / month</dd></div>
           <div><dt>Produced in 2022</dt><dd>${fmt(CWD_FACTS.productionM3Year2022)} m³</dd></div>
           <div><dt>Non-revenue water</dt><dd>${CWD_FACTS.nrwPct}% (year: ${CWD_FACTS.nrwPctYear}%)</dd></div>
           <div><dt>Average use</dt><dd>${fmt(CWD_FACTS.avgM3PerConnection, 1)} m³ per connection / month</dd></div>
-          <div><dt>Coverage</dt><dd>${CWD_FACTS.barangaysServed} of ${CWD_FACTS.barangaysTotal} barangays · ${fmt(CWD_FACTS.networkKm, 1)} km of pipes</dd></div>
+          <div><dt>Coverage</dt><dd>${CWD_FACTS.barangaysServed} of ${CWD_FACTS.barangaysTotal} barangays, ${fmt(CWD_FACTS.networkKm, 1)} km of pipes</dd></div>
         </dl><p class="fine">Source: ${esc(CWD_FACTS.source)}; Water Safety Plan 2022.</p>`)}
       </div>
       <div class="an-sec"><div><h2>Pressure by zone</h2><p>Last 24 simulated hours. The dashed line marks the ${PZ_ALARM} PSI low-pressure alarm. Select a zone to see only its barangays, or a barangay to see its households and consumption.</p></div>${src('SIMULATED')}</div>

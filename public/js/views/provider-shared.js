@@ -12,7 +12,7 @@ const st = () => S.getState();
 export const ZONE_COLORS = { A: '#2a78d6', B: '#eb6834', C: '#1baf7a', D: '#e87ba4', E: '#4a3aa7' };
 export const incSev = (i) => ({ Critical: 'critical', High: 'critical', Medium: 'warning', Low: 'info' }[i.severity] || 'info');
 export const incStatus = (i) => status(i.status === 'Resolved' ? 'normal' : i.status === 'Monitoring' ? 'info' : i.status === 'Investigating' ? 'warning' : 'warning', i.status);
-export const woStatusBadge = (w) => status(w.status === 'Completed' ? 'normal' : w.status === 'New' ? 'offline' : w.target < Date.now() ? 'warning' : 'info', w.status === 'Completed' || w.target >= Date.now() || w.status === 'New' ? w.status : `${w.status} · overdue`);
+export const woStatusBadge = (w) => status(w.status === 'Completed' ? 'normal' : w.status === 'New' ? 'offline' : w.target < Date.now() ? 'warning' : 'info', w.status === 'Completed' || w.target >= Date.now() || w.status === 'New' ? w.status : `${w.status}, overdue`);
 
 // ---------------------------------------------------------------- incident table (plain language, minimal color)
 const SEV_DOT = { Critical: 'crit', High: 'crit', Medium: 'warn', Low: 'low' };
@@ -34,7 +34,7 @@ export function incidentTable(list, emptyMsg = 'No active incidents') {
     [
       {
         label: 'Incident',
-        render: (i) => `<div class="it-t">${esc(i.title.split(' — ')[0])}</div><div class="it-s"><span class="mono">${i.id}</span> · ${esc(zoneById(i.zone).name)}</div>`,
+        render: (i) => `<div class="it-t">${esc(i.title.split(' — ')[0])}</div><div class="it-s"><span class="mono">${i.id}</span>, ${esc(zoneById(i.zone).name)}</div>`,
       },
       { label: 'Severity', render: (i) => `<span class="sev-dot sev-dot--${SEV_DOT[i.severity] || 'low'}" aria-hidden="true"></span>${esc(i.severity)}` },
       {
@@ -133,7 +133,7 @@ function advForm() {
 function advPreview() {
   const d = advDraft;
   const brgys = ZONES.filter((z) => d.areas.includes(z.id)).flatMap((z) => z.barangays);
-  return `<div class="phone"><div class="phone-bar">${icon('bell', 12)} SAMAR-AGOS · now</div>
+  return `<div class="phone"><div class="phone-bar">${icon('bell', 12)} SAMAR-AGOS, now</div>
     <div class="phone-n"><strong>New water advisory</strong><span>${esc(d.title || 'Advisory title')}</span></div>
     <article class="adv"><div class="adv-h">${status(d.serviceStatus === 'NO WATER' ? 'critical' : d.serviceStatus === 'QUALITY ADVISORY' ? 'info' : 'warning', d.serviceStatus)}</div>
     <h3 class="adv-t">${esc(d.title || 'Advisory title')}</h3>
@@ -170,7 +170,7 @@ export function openMapPanel(kind, id) {
   if (kind === 'asset') {
     const a = s.assets.find((x) => x.id === id);
     const sev = assetLiveStatus(a, s);
-    let body = `<div class="pnl-st">${status(sev, SEV[sev].label, { lg: true })}<span class="muted sm">${esc(a.type)} · ${esc(a.site || zoneById(a.zone)?.name || '')}</span></div><dl class="kv">`;
+    let body = `<div class="pnl-st">${status(sev, SEV[sev].label, { lg: true })}<span class="muted sm">${esc(a.type)}, ${esc(a.site || zoneById(a.zone)?.name || '')}</span></div><dl class="kv">`;
     if (a.type === 'Reservoir') {
       const lv = t.volML / S.RES_CAP_ML;
       body += `<div><dt>Current volume</dt><dd><strong>${fmtL(t.volML * 1e6)}</strong> ${src('SIMULATED')}</dd></div><div><dt>Capacity</dt><dd>440,000 L</dd></div>

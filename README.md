@@ -98,9 +98,8 @@ To run without Firebase (offline local demo with role picker), set `apiKey: ''` 
 1. A resident reports a problem (**Report a Problem**). It appears in the operator's **Incidents → Report Inbox**, grouped by barangay.
 2. The operator checks the evidence (pressure, flow, storage, equipment) and creates an incident.
 3. From the incident, the operator creates a work order and publishes an advisory to the affected barangays.
-4. The **Response Simulator** compares responses (restore the Caramayon pumps, tanker water, demand management) against the forecast.
-5. The crew completes the work order with repair notes and a verification reading; the operator resolves the incident and residents are notified.
-6. Residents confirm whether service returned; "problem still exists" reopens the incident.
+4. The crew completes the work order with repair notes and a verification reading; the operator resolves the incident and residents are notified.
+5. Residents confirm whether service returned; "problem still exists" reopens the incident.
 
 Turn on **Demo mode** to trigger scenarios (Caramayon power outage, turbid Antiao River, low pressure in Maulong, main break in Canlapwas) for presentations.
 
@@ -122,7 +121,7 @@ public/js/
   map.js                     map entry point + offline schematic SVG fallback
   views/resident.js          resident portal (mobile-first)
   views/provider*.js         provider portal (overview, operations, incidents, work orders,
-                             forecast, simulator, advisories, assets, analytics; maintenance is a Work Orders tab)
+                             forecast, advisories, assets, analytics; maintenance is a Work Orders tab)
 ```
 
 ## Data transparency

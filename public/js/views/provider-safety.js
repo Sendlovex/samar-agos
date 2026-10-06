@@ -193,7 +193,7 @@ function actionsCard(ws) {
   return card(
     'Recommended actions',
     `<ol class="ws-steps">${steps.map(([ic, t, d], i) => `<li><span class="ws-step-ic">${icon(ic, 18)}<b>${i + 1}</b></span><strong>${esc(t)}</strong><span>${esc(d)}</span></li>`).join('')}</ol>
-    ${ws.verdict === 'unsafe' ? `<div class="ws-act"><button class="btn btn--primary btn--sm" data-action="ws-boil">${icon('megaphone', 15)} Issue boil-water advisory</button><a class="btn btn--outline btn--sm" href="#/p/work-orders">${icon('wrench', 15)} Open work orders</a></div>` : ''}`,
+    ${ws.verdict === 'unsafe' ? `<div class="ws-act"><a class="btn btn--outline btn--sm" href="#/p/work-orders">Open work orders</a><button class="btn btn--primary btn--sm" data-action="ws-boil">Issue boil-water advisory</button></div>` : ''}`,
     { sub: 'Follow the utility’s water safety plan' }
   );
 }

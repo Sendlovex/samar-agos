@@ -50,7 +50,6 @@ const PRO_NAV = [
     { id: 'operations', label: 'Operations', icon: 'activity' },
     { id: 'water-safety', label: 'Water Safety', icon: 'shield' },
     { id: 'forecast', label: 'Forecast', icon: 'forecast' },
-    { id: 'simulator', label: 'Response Simulator', icon: 'sliders' },
   ] },
   { group: 'Respond', items: [
     { id: 'incidents', label: 'Incidents', icon: 'alert', count: () => S.getState().incidents.filter((i) => i.status !== 'Resolved').length },
@@ -107,7 +106,7 @@ function render() {
     rerendering = false;
   }
   if (!sameView) {
-    document.title = `${view.title || 'SAMAR-AGOS'} · SAMAR-AGOS`;
+    document.title = `${view.title || 'SAMAR-AGOS'} | SAMAR-AGOS`;
     const h1 = document.querySelector('#view h1');
     h1 && h1.setAttribute('tabindex', '-1');
   }
@@ -125,7 +124,7 @@ window.addEventListener('hashchange', () => {
 // ---------------------------------------------------------------- login
 function renderLogin() {
   current = null;
-  document.title = 'Sign in · SAMAR-AGOS';
+  document.title = 'Sign in | SAMAR-AGOS';
   app.innerHTML = `<div class="login">${brandPanel()}
     <section class="login-panel">
       <div class="login-box">
@@ -135,12 +134,12 @@ function renderLogin() {
         <div class="role-cards">
           <button class="role-card" data-action="login" data-role="resident">
             <span class="role-ic">${icon('home', 22)}</span>
-            <span class="role-txt"><strong>Resident</strong><span>${esc(RESIDENT.name)} · ${esc(RESIDENT.address)}</span><em>Check service status, report problems, track repairs</em></span>
+            <span class="role-txt"><strong>Resident</strong><span>${esc(RESIDENT.name)}, ${esc(RESIDENT.address)}</span><em>Check service status, report problems, track repairs</em></span>
             ${icon('chev-r', 20)}
           </button>
           <button class="role-card" data-action="login" data-role="provider">
             <span class="role-ic role-ic--navy">${icon('activity', 22)}</span>
-            <span class="role-txt"><strong>Water Provider / Operator</strong><span>${esc(PROVIDER_USER.name)} · ${esc(UTILITY.name)}</span><em>Monitor operations, investigate incidents, dispatch crews</em></span>
+            <span class="role-txt"><strong>Water Provider / Operator</strong><span>${esc(PROVIDER_USER.name)}, ${esc(UTILITY.name)}</span><em>Monitor operations, investigate incidents, dispatch crews</em></span>
             ${icon('chev-r', 20)}
           </button>
         </div>
@@ -182,7 +181,7 @@ function renderSplash(msg) {
 function renderAuth() {
   current = null;
   const signup = authMode === 'signup';
-  document.title = `${signup ? 'Create account' : 'Sign in'} · SAMAR-AGOS`;
+  document.title = `${signup ? 'Create account' : 'Sign in'} | SAMAR-AGOS`;
   app.innerHTML = `<div class="login">${brandPanel()}
     <section class="login-panel">
       <div class="login-box">
@@ -263,7 +262,7 @@ const readProfileFields = () => {
 function renderOnboarding() {
   current = null;
   const ses = B.getSession();
-  document.title = 'Set up your profile · SAMAR-AGOS';
+  document.title = 'Set up your profile | SAMAR-AGOS';
   app.innerHTML = `<div class="login">${brandPanel()}
     <section class="login-panel"><div class="login-box">
       <h2>Set up your profile</h2>
@@ -834,7 +833,7 @@ export function notificationsView(aud) {
         ? list
             .map(
               (n) => `<article class="nt ${n.state === 'unread' ? 'is-unread' : ''}">${sevIcon(n)}
-        <div class="nt-c" role="button" tabindex="0" data-action="notif-open" data-id="${n.id}" data-link="${esc(n.link || '')}"><div class="nt-t">${esc(n.title)} ${n.state === 'unread' ? '<span class="sr-only">(unread)</span><span class="nt-dot" aria-hidden="true"></span>' : ''}</div><div class="nt-b">${esc(n.body)}</div><div class="nt-time">${fmtDateTime(n.at)} · ${relTime(n.at)}</div></div>
+        <div class="nt-c" role="button" tabindex="0" data-action="notif-open" data-id="${n.id}" data-link="${esc(n.link || '')}"><div class="nt-t">${esc(n.title)} ${n.state === 'unread' ? '<span class="sr-only">(unread)</span><span class="nt-dot" aria-hidden="true"></span>' : ''}</div><div class="nt-b">${esc(n.body)}</div><div class="nt-time">${fmtDateTime(n.at)}, ${relTime(n.at)}</div></div>
         <div class="nt-a">${n.state !== 'archived' ? `<button class="btn btn--ghost btn--xs" data-action="notif-read" data-id="${n.id}" data-to="${n.state === 'unread' ? 'read' : 'unread'}">${n.state === 'unread' ? 'Mark read' : 'Mark unread'}</button><button class="btn btn--ghost btn--xs" data-action="notif-archive" data-id="${n.id}">${icon('archive', 14)} Archive</button>` : `<button class="btn btn--ghost btn--xs" data-action="notif-read" data-id="${n.id}" data-to="read">Restore</button>`}</div></article>`
             )
             .join('')

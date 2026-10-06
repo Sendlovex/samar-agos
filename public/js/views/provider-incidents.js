@@ -50,14 +50,14 @@ function clusterList() {
       const z = zoneById(c.zone);
       const zt = s.tele.zones[c.zone];
       const on = selCluster === c.zone;
-      const br = typeBreakdown(c.reports).slice(0, 3).map((b) => `${b.n} ${b.label.toLowerCase()}`).join(' · ');
+      const br = typeBreakdown(c.reports).slice(0, 3).map((b) => `${b.n} ${b.label.toLowerCase()}`).join(', ');
       const share = (c.reports.length / total) * 100;
       return `<li><button class="ib-item ${on ? 'is-on' : ''}" data-action="inbox-sel" data-zone="${c.zone}" aria-pressed="${on}">
         <span class="ib-item-main">
           <span class="ib-item-h">${dot(zt.status)}<strong>${esc(z.name)}</strong></span>
           <span class="ib-item-s">${esc(br.charAt(0).toUpperCase() + br.slice(1))}</span>
           <span class="ib-share" aria-hidden="true"><span style="width:${share}%"></span></span>
-          <span class="ib-item-f">${zt.status === 'normal' ? 'Pressure normal' : `Pressure ${fmt(zt.pressure, 0)} PSI`} · since ${fmtTime(c.reports[0].submittedAt)}</span>
+          <span class="ib-item-f">${zt.status === 'normal' ? 'Pressure normal' : `Pressure ${fmt(zt.pressure, 0)} PSI`}, since ${fmtTime(c.reports[0].submittedAt)}</span>
         </span>
         <span class="ib-item-n"><strong>${c.reports.length}</strong><small>reports</small></span>
         ${icon('chev-r', 16, 'ib-chev')}
@@ -71,7 +71,7 @@ function wsHead() {
   if (!c) return '';
   const z = zoneById(c.zone);
   const inc = openIncidentIn(c.zone);
-  return `<div class="ib-head"><div><div class="ib-k">Possible service issue</div><h2>${esc(z.name)}</h2><div class="ib-sub">${esc(z.barangays.join(', '))} · ${fmt(z.connections)} service connections</div></div>
+  return `<div class="ib-head"><div><div class="ib-k">Possible service issue</div><h2>${esc(z.name)}</h2><div class="ib-sub">${esc(z.barangays.join(', '))}, ${fmt(z.connections)} service connections</div></div>
     <div class="ib-actions">
       <button class="btn btn--ghost btn--sm" data-action="inbox-ack" data-zone="${c.zone}">${icon('check', 15)} Acknowledge only</button>
       ${inc ? `<button class="btn btn--outline btn--sm" data-action="inbox-link" data-zone="${c.zone}" data-inc="${inc.id}">${icon('link', 15)} Link to ${inc.id}</button>` : ''}
@@ -108,7 +108,7 @@ function wsReports() {
   if (!c) return '';
   const rows = c.reports.slice().reverse();
   return `<div class="ib-sec">
-    <div class="ib-sec-h"><h3>Reports in this cluster</h3><span class="muted sm">${rows.length} total · newest first</span></div>
+    <div class="ib-sec-h"><h3>Reports in this cluster</h3><span class="muted sm">${rows.length} total, newest first</span></div>
     <div class="ib-tbl">${table(
       [
         { label: 'Report', render: (r) => `<span class="mono">${r.id}</span>${r.simulated ? '<div class="it-s">Simulated (demo)</div>' : r.mine ? '<div class="it-s">Your report</div>' : ''}` },
@@ -223,9 +223,9 @@ function incCondition(i) {
   const ticks = [0, 24, 48, n - 1].map((k) => ({ i: k, label: k === n - 1 ? 'Now' : `−${Math.round(((n - 1 - k) * S.DT_MIN) / 60)} h` }));
   return `<div class="grid-2 grid-2--tight">
     <div>${lineChart({ id: `inc-p-${i.id}`, label: `Pressure, ${z.short}, last 6 simulated hours`, series: [{ name: `${z.short} pressure`, color: '#1D6FB8', values: slice(h.pressure[i.zone]), area: true }], labels, xTicks: ticks, thresholds: [{ y: 26, label: 'Low-pressure alarm', color: '#D97706' }], yMin: 0, yFmt: (v) => `${Math.round(v)} PSI`, h: 170 })}
-      <div class="chart-cap">Pressure readings ${src('SIMULATED')} · now ${fmt(zt.pressure, 0)} PSI</div></div>
+      <div class="chart-cap">Pressure readings ${src('SIMULATED')}, now ${fmt(zt.pressure, 0)} PSI</div></div>
     <div>${lineChart({ id: `inc-f-${i.id}`, label: `Flow, ${z.short}, last 6 simulated hours`, series: [{ name: `${z.short} inlet flow`, color: '#13A8C4', values: slice(h.flow[i.zone]), area: true }], labels, xTicks: ticks, yMin: 0, yFmt: (v) => `${fmt(v, 1)} L/s`, h: 170 })}
-      <div class="chart-cap">Flow readings ${src('SIMULATED')} · ${zt.flowDeltaPct >= 0 ? '+' : ''}${fmt(zt.flowDeltaPct, 0)}% vs expected</div></div></div>`;
+      <div class="chart-cap">Flow readings ${src('SIMULATED')}, ${zt.flowDeltaPct >= 0 ? '+' : ''}${fmt(zt.flowDeltaPct, 0)}% vs expected</div></div></div>`;
 }
 
 const incidentDetail = {
@@ -261,11 +261,10 @@ const incidentDetail = {
     const newRelated = S.reportClusters().find((c) => c.zone === i.zone);
     return `<a class="back" href="#/p/incidents">${icon('chev-l', 16)} Incidents</a>
     <div class="page-h page-h--inc"><div><div class="mono muted">${i.id}</div><h1>${esc(i.title)}</h1>
-      <div class="inc-badges"><span>Status:</span> ${incStatus(i)} <span>Severity:</span> ${sevBadge(i.severity)} <span class="muted">· ${esc(i.type)}</span></div></div>
+      <div class="inc-badges"><span>Status:</span> ${incStatus(i)} <span>Severity:</span> ${sevBadge(i.severity)} <span>Type:</span> <span class="muted">${esc(i.type)}</span></div></div>
       <div class="page-a inc-actions">
         ${!resolved ? `<button class="btn btn--primary btn--sm" data-action="wo-new" data-inc="${i.id}" data-pri="${i.severity === 'Low' ? 'Low' : i.severity === 'Medium' ? 'Medium' : 'High'}">${icon('wrench', 15)} Create Work Order</button>
         <button class="btn btn--outline btn--sm" data-action="adv-new" data-inc="${i.id}">${icon('megaphone', 15)} Publish Advisory</button>
-        <a class="btn btn--outline btn--sm" href="#/p/simulator" data-action="sim-from-inc" data-inc="${i.id}">${icon('sliders', 15)} Run Response Simulation</a>
         <button class="btn btn--ghost btn--sm" data-action="inc-update" data-id="${i.id}">${icon('file', 15)} Update Incident</button>
         <button class="btn btn--success btn--sm" data-action="inc-resolve" data-id="${i.id}">${icon('check-circle', 15)} Resolve Incident</button>` : `<span class="muted">Resolved ${fmtDateTime(i.resolvedAt)}</span>`}
       </div></div>
@@ -286,7 +285,7 @@ const incidentDetail = {
         ${card(
           'Evidence',
           `<div class="evg">
-            <div class="evg-i"><div class="evg-h">${icon('users', 16)} Resident reports ${src('RESIDENT REPORTED')}</div><div class="evg-v">${reps.length}</div><div class="evg-d">${br.map((b) => `${b.n} ${esc(b.label)}`).join(' · ') || 'No reports linked'}</div></div>
+            <div class="evg-i"><div class="evg-h">${icon('users', 16)} Resident reports ${src('RESIDENT REPORTED')}</div><div class="evg-v">${reps.length}</div><div class="evg-d">${br.map((b) => `${b.n} ${esc(b.label)}`).join(', ') || 'No reports linked'}</div></div>
             <div class="evg-i"><div class="evg-h">${icon('gauge', 16)} Pressure readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].pressure, 0)} <small>PSI</small></div><div class="evg-d">Normal ~${z.basePressure} PSI ${src('SIMULATED')}</div></div>
             <div class="evg-i"><div class="evg-h">${icon('activity', 16)} Flow readings</div><div class="evg-v">${fmt(s.tele.zones[i.zone].flow, 1)} <small>L/s</small></div><div class="evg-d">${s.tele.zones[i.zone].flowDeltaPct >= 0 ? '+' : ''}${fmt(s.tele.zones[i.zone].flowDeltaPct, 0)}% vs expected ${src('SIMULATED')}</div></div>
             <div class="evg-i"><div class="evg-h">${icon('zap', 16)} Equipment & area alerts</div><div class="evg-v">${equipAlerts.length}</div><div class="evg-d">${equipAlerts.map((a) => esc(a.title)).join('; ') || 'None'}</div></div>
@@ -310,7 +309,7 @@ const incidentDetail = {
         ${card(
           'Advisories',
           advs.length
-            ? advs.map((a) => `<div class="mini-adv"><div>${status(a.status === 'Active' ? 'warning' : 'normal', a.status === 'Active' ? a.serviceStatus : 'Resolved')} <span class="mono muted sm">${a.id}</span></div><strong>${esc(a.title)}</strong><span class="muted sm">Published ${fmtDateTime(a.startAt)} · next update ${a.nextUpdate ? fmtTime(a.nextUpdate) : '—'}</span></div>`).join('')
+            ? advs.map((a) => `<div class="mini-adv"><div>${status(a.status === 'Active' ? 'warning' : 'normal', a.status === 'Active' ? a.serviceStatus : 'Resolved')} <span class="mono muted sm">${a.id}</span></div><strong>${esc(a.title)}</strong><span class="muted sm">Published ${fmtDateTime(a.startAt)}, next update ${a.nextUpdate ? fmtTime(a.nextUpdate) : '—'}</span></div>`).join('')
             : empty('No advisory published', 'Residents are not yet informed about this incident.', 'megaphone', !resolved ? `<button class="btn btn--outline btn--sm" data-action="adv-new" data-inc="${i.id}">Publish Advisory</button>` : '')
         )}
         ${card(
@@ -459,10 +458,10 @@ const workOrders = {
         <section class="kp-primary">
           <div class="kpi-top"><span class="kpi-label">Open Work Orders</span>${src('FIELD')}</div>
           <div class="kp-main"><div><div class="kpi-value kpi-value--xl">${open.length}</div>
-            <div class="kpi-sub">${done.length} completed · ${all.length} total</div></div></div>
+            <div class="kpi-sub">${done.length} completed, ${all.length} total</div></div></div>
           <div class="wo-bar" role="img" aria-label="Open work orders by stage">${stages.filter((b) => b.n).map((b, k) => `<span class="wo-bar-s wo-bar-s--${k}" style="flex:${b.n}" title="${b.x}: ${b.n}"></span>`).join('') || '<span class="wo-bar-s is-empty" style="flex:1"></span>'}</div>
           <ul class="wo-stages">${stages.map((b, k) => `<li class="${b.n ? '' : 'is-zero'}"><span class="wo-key wo-bar-s--${k}" aria-hidden="true"></span><span>${b.x}</span><strong>${b.n}</strong></li>`).join('')}</ul>
-          <div class="kp-foot"><span>${next ? `Next due <strong class="mono">${next.id}</strong> · ${fmtDateTime(next.target)}` : 'No open work orders'}</span><span class="kp-flag kp-flag--${flag[0]}">${flag[1]}</span></div>
+          <div class="kp-foot"><span>${next ? `Next due <strong class="mono">${next.id}</strong>, ${fmtDateTime(next.target)}` : 'No open work orders'}</span><span class="kp-flag kp-flag--${flag[0]}">${flag[1]}</span></div>
         </section>
         ${kpi({ label: 'Overdue', value: overdue.length, sub: overdue.length ? `<span class="txt-warn">Past target time</span>` : 'All within target', sev: overdue.length ? 'warning' : null })}
         ${kpi({ label: 'Due in 24 hours', value: dueSoon.length, sub: dueSoon.length ? `Earliest ${fmtDateTime(Math.min(...dueSoon.map((w) => w.target)))}` : 'Nothing due today' })}
@@ -472,7 +471,7 @@ const workOrders = {
       ${tabs([{ id: 'open', label: 'Open', count: open.length }, { id: 'overdue', label: 'Overdue', count: overdue.length }, { id: 'completed', label: 'Completed', count: done.length }, { id: 'all', label: 'All', count: all.length }, { id: 'maintenance', label: 'Maintenance schedule', count: maintLate.length + maintSoon.length }], woFilter, 'wo-tab')}
       ${woFilter === 'maintenance' ? maintTable(maint) : `<div class="card wo-list">${table(
         [
-          { label: 'Work order', render: (w) => `<div class="wo-id"><strong class="mono">${w.id}</strong><span>${w.incidentId ? `<span class="mono">${w.incidentId}</span>` : 'Preventive'} · <span class="mono">${w.assetId}</span></span></div>` },
+          { label: 'Work order', render: (w) => `<div class="wo-id"><strong class="mono">${w.id}</strong><span>${w.incidentId ? `<span class="mono">${w.incidentId}</span>` : 'Preventive'}, <span class="mono">${w.assetId}</span></span></div>` },
           { label: 'Task', render: (w) => `<div class="clamp2 wo-task">${esc(w.description)}</div>` },
           { label: 'Priority', render: (w) => priorityBadge(w.priority) },
           { label: 'Team', render: (w) => (w.team ? esc(w.team) : '<span class="muted">Unassigned</span>') },

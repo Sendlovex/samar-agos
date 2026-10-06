@@ -135,6 +135,11 @@ export async function listReadings(barangay) {
   const snap = await F.getDocs(F.query(F.collection(db, 'meterReadings'), F.where('barangay', '==', barangay)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
+// A resident's own readings (the rules allow reading only documents with their uid).
+export async function myReadings() {
+  const snap = await F.getDocs(F.query(F.collection(db, 'meterReadings'), F.where('uid', '==', session.uid)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
 export async function saveReading({ uid, barangay, month, m3 }) {
   const doc = { uid, barangay, month, m3, recordedAt: Date.now(), recordedBy: session.email };
   await F.setDoc(F.doc(db, 'meterReadings', `${uid}_${month}`), doc);

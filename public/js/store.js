@@ -39,6 +39,16 @@ function save() {
   }, 600);
 }
 
+// Published reference text (name, location, spec, source) always comes from the current registry,
+// so wording fixes reach assets already stored locally or in the database; live fields are kept.
+const REGISTRY_FIELDS = ['name', 'type', 'site', 'spec', 'source', 'installed'];
+function withRegistry(list) {
+  return list.map((a) => {
+    const ref = REAL_ASSETS.find((r) => r.id === a.id);
+    return ref ? { ...a, ...Object.fromEntries(REGISTRY_FIELDS.filter((k) => k in ref).map((k) => [k, ref[k]])) } : a;
+  });
+}
+
 export function load() {
   try {
     const raw = localStorage.getItem(KEY);
@@ -46,6 +56,7 @@ export function load() {
       const s = JSON.parse(raw);
       if (s && s.version === 6 && s.tele) {
         state = s;
+        state.assets = withRegistry(state.assets || []);
         return;
       }
     }
@@ -146,6 +157,8 @@ export function applyRemote(coll, docs, part) {
     state.notifications = [...Object.values(notifParts).flat(), ...local].sort(SORT.notifications);
   } else if (coll === 'assets' && !docs.length) {
     state.assets = REAL_ASSETS.map((a) => ({ ...a })); // registry not in the database yet
+  } else if (coll === 'assets') {
+    state.assets = withRegistry(docs).sort(SORT.assets);
   } else {
     state[coll] = docs.sort(SORT[coll]);
   }

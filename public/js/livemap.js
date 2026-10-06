@@ -230,7 +230,7 @@ function addLegend(I) {
   ctrl(
     'bottomleft',
     `<div class="lm-legend"><span><i class="lm-legend-line" style="background:${NET.main}"></i>Transmission main</span><span><i class="lm-legend-line lm-legend-line--thin" style="background:${NET.dist}"></i>Distribution line</span><span><i class="lm-legend-line lm-legend-line--thin" style="background:repeating-linear-gradient(90deg,${NET.issue} 0 5px,transparent 5px 8px)"></i>Low-pressure area</span><span>${dot(COL.normal)}Normal</span><span>${dot(COL.warning)}Warning</span><span>${dot(COL.critical)}Critical</span><span>${dot(COL.offline)}Offline</span><span><i class="lm-legend-rep"></i>Resident report</span><span><i class="lm-legend-inc"></i>Incident</span></div>
-     <div class="lm-note">Barangays: OpenStreetMap (some approximate) · facilities: CWD Water Safety Plan 2022 · pipe routes illustrative · readings SIMULATED</div>`
+     <div class="lm-note">Barangays: OpenStreetMap (some approximate), facilities: CWD Water Safety Plan 2022, pipe routes illustrative, readings SIMULATED</div>`
   ).addTo(I.map);
 }
 
@@ -259,12 +259,12 @@ const pinIcon = () => L.divIcon({ html: '<svg viewBox="-14 -34 28 36" width="32"
 function assetTip(a, s, sev) {
   const t = s.tele;
   let r = '';
-  if (a.type === 'Reservoir') r = `${Math.round((t.volML / RES_CAP_ML) * 100)}% · ${fmt(t.volML, 2)} ML`;
+  if (a.type === 'Reservoir') r = `${Math.round((t.volML / RES_CAP_ML) * 100)}%, ${fmt(t.volML, 2)} ML`;
   else if (a.type === 'Tank' && t.tanks[a.id]) r = `${Math.round(t.tanks[a.id].level * 100)}% full`;
   else if (a.type === 'Pump' && t.pumps[a.id]) r = t.pumps[a.id].status === 'offline' ? 'Offline' : t.pumps[a.id].flowLs != null ? `${fmt(t.pumps[a.id].flowLs, 1)} L/s` : 'Running';
   else if (a.status === 'offline') r = 'Not reporting';
   const label = { normal: 'Normal', warning: 'Warning', critical: 'Critical', offline: 'Offline' }[sev];
-  return `<strong>${esc(a.name)}</strong><span>${esc(a.type)} · ${label}${r ? ` · ${r}` : ''}</span>${a.type !== 'Valve' && r ? '<em>SIMULATED</em>' : ''}`;
+  return `<strong>${esc(a.name)}</strong><span>${esc(a.type)}, ${label}${r ? `, ${r}` : ''}</span>${a.type !== 'Valve' && r ? '<em>SIMULATED</em>' : ''}`;
 }
 const tipOpts = { direction: 'top', offset: [0, -14], className: 'lm-tip', opacity: 1 };
 
@@ -299,7 +299,7 @@ function sync(I) {
     const focus = I.opts.focusZone === z.id;
     const c = zs === 'neutral' ? '#1D6FB8' : COL[zs];
     const style = { color: focus ? '#0B2545' : c, weight: focus ? 3 : 1.6, dashArray: focus ? null : '5 5', fillColor: c, fillOpacity: zs === 'normal' || zs === 'neutral' ? 0.05 : 0.17 };
-    const label = mode === 'provider' ? `<b>${esc(z.short.toUpperCase())}</b><span>${fmt(t.zones[z.id].pressure, 0)} PSI${zs !== 'normal' ? ' ▼' : ''}</span>` : `<b>${esc(z.short.toUpperCase())}</b><span>${esc(z.barangays.join(' · '))}</span>`;
+    const label = mode === 'provider' ? `<b>${esc(z.short.toUpperCase())}</b><span>${fmt(t.zones[z.id].pressure, 0)} PSI${zs !== 'normal' ? ' ▼' : ''}</span>` : `<b>${esc(z.short.toUpperCase())}</b><span>${esc(z.barangays.join(', '))}</span>`;
     let p = I.zones.get(z.id);
     if (!p) {
       p = L.polygon(zoneLL(z.id), { ...style, interactive: mode === 'provider' }).addTo(I.groups.zones);
@@ -326,7 +326,7 @@ function sync(I) {
       const asset = s.assets.find((a) => a.id === pl.id);
       if (!line) {
         line = L.polyline(parsePoly(pl.pts).map(([x, y]) => toLL(x, y)), style).addTo(I.groups.pipes);
-        line.bindTooltip(`<strong>${esc(asset?.name || `Pipeline ${pl.id}`)}</strong><span>${pl.kind === 'raw' ? 'Raw-water line' : pl.kind === 'main' ? 'Main line' : 'Distribution line'}${issue ? ' · Warning' : ''}</span>`, { ...tipOpts, sticky: true, offset: [0, -6] });
+        line.bindTooltip(`<strong>${esc(asset?.name || `Pipeline ${pl.id}`)}</strong><span>${pl.kind === 'raw' ? 'Raw-water line' : pl.kind === 'main' ? 'Main line' : 'Distribution line'}${issue ? ', Warning' : ''}</span>`, { ...tipOpts, sticky: true, offset: [0, -6] });
         if (asset) line.on('click', () => select(I, 'asset', asset.id));
         I.pipes.set(pl.id, line);
       } else line.setStyle(style);
@@ -361,7 +361,7 @@ function sync(I) {
     CRITICAL_FACILITIES.forEach((f) => {
       const isSel = sel === f.id;
       const zt = t.zones[f.zone];
-      const tip = `<strong>${esc(f.name)}</strong><span>${esc(f.kind)} · ${zt.status === 'normal' ? 'Supply normal' : 'Pressure below normal'}</span>`;
+      const tip = `<strong>${esc(f.name)}</strong><span>${esc(f.kind)}, ${zt.status === 'normal' ? 'Supply normal' : 'Pressure below normal'}</span>`;
       keyed(
         I,
         `f:${f.id}`,
@@ -381,7 +381,7 @@ function sync(I) {
       .filter((r) => r.status !== 'verified' && !(r.status === 'repair_completed' && !r.awaitingVerification))
       .forEach((r) => {
         const isSel = sel === r.id;
-        const tip = `<strong>${esc(reportTypeLabel(r.type))}</strong><span>${r.id} · ${esc(r.location)}</span><em>RESIDENT REPORTED</em>`;
+        const tip = `<strong>${esc(reportTypeLabel(r.type))}</strong><span>${r.id}, ${esc(r.location)}</span><em>RESIDENT REPORTED</em>`;
         keyed(
           I,
           `r:${r.id}:${r.incidentId ? 1 : 0}`,
@@ -403,7 +403,7 @@ function sync(I) {
       .forEach((i) => {
         const [x, y] = incidentPos(i);
         const isSel = sel === i.id;
-        const tip = `<strong>${esc(i.title)}</strong><span>${i.id} · ${esc(i.status)} · ${esc(i.severity)} severity</span>`;
+        const tip = `<strong>${esc(i.title)}</strong><span>${i.id}, ${esc(i.status)}, ${esc(i.severity)} severity</span>`;
         keyed(
           I,
           `i:${i.id}`,
@@ -424,7 +424,7 @@ function sync(I) {
       .filter((p) => p.active)
       .forEach((p) => {
         const isSel = sel === p.id;
-        const tip = `<strong>${esc(p.name)}</strong><span>${esc(p.status)} · ${esc(p.hours)}</span>`;
+        const tip = `<strong>${esc(p.name)}</strong><span>${esc(p.status)}, ${esc(p.hours)}</span>`;
         keyed(
           I,
           `w:${p.id}`,
@@ -481,7 +481,7 @@ function drawNetwork(I) {
     const z = zoneById(ln.z) || { name: 'Service area' };
     const line = L.polyline(ln.c, { renderer, interactive: true });
     line.bindTooltip(
-      () => `<strong>${esc(ln.n || 'Unnamed street')}</strong><span>${ln.k === 'm' ? 'Transmission main' : 'Distribution line'} · ${esc(z.name)}${zoneAffected(getState(), ln.z) ? ' · Pressure below normal' : ''}</span><em>Illustrative routing along OSM roads</em>`,
+      () => `<strong>${esc(ln.n || 'Unnamed street')}</strong><span>${ln.k === 'm' ? 'Transmission main' : 'Distribution line'}, ${esc(z.name)}${zoneAffected(getState(), ln.z) ? ', Pressure below normal' : ''}</span><em>Illustrative routing along OSM roads</em>`,
       { ...tipOpts, sticky: true, offset: [0, -8] }
     );
     line.on('click', () => select(I, 'zone', ln.z));

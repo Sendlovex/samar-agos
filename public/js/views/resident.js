@@ -1,5 +1,6 @@
 // Resident portal views — mobile-first.
 import * as S from '../store.js';
+import * as B from '../backend.js';
 import { RESIDENT, REPORT_TYPES, REPORT_STEPS, ZONES, zoneById, reportTypeLabel, UTILITY, WATER_RATES, waterBill, CWD_FACTS } from '../data.js';
 import { icon, status, src, card, kpi, tabs, alertBanner, timeline, empty, register, registerInputs, openModal, closeOverlay, field, updatedAgo, SEV, actions, busy } from '../ui.js';
 import { lineChart, barChart, gaugeBar } from '../charts.js';
@@ -255,7 +256,7 @@ function safetyMain() {
   // Checkpoint journey: where water is tested on its way to homes, left to right.
   const stops = [
     ...ws.stations.map((x) => ({ name: SAFE_POINTS[x.id] || esc(x.name), sub: SAFE_POINT_SUB[x.id] || '', ok: x.sev === 'normal', ic: 'droplet' })),
-    { name: 'Laboratory germ test', sub: `Samples tested for bacteria · ${relTime(ws.labAt)}`, ok: labOk, ic: 'flask' },
+    { name: 'Laboratory germ test', sub: `Samples tested for bacteria, ${relTime(ws.labAt)}`, ok: labOk, ic: 'flask' },
   ];
   const journey = card(
     'Where we check your water',
@@ -319,7 +320,7 @@ function homeLatest() {
     `<a class="rep-row" href="#/r/reports/${r.id}">
       <div class="rep-row-h"><strong>${esc(reportTypeLabel(r.type))}</strong>${status(rs.sev, rs.label)}</div>
       ${progressMini(r)}
-      ${last ? `<p class="rep-row-u">${esc(last.text)} <span class="muted">· ${relTime(last.at)}</span></p>` : ''}
+      ${last ? `<p class="rep-row-u">${esc(last.text)} <span class="muted">(${relTime(last.at)})</span></p>` : ''}
       ${rs.label === 'Awaiting Your Confirmation' ? `<div class="banner banner--info sm">${icon('info', 16)}<div class="banner-c"><strong>Is your water back?</strong> Tap here to tell us.</div></div>` : ''}
     </a>`,
     { actions: `<a class="link" href="#/r/reports">All my reports ${icon('chev-r', 14)}</a>` }
@@ -335,7 +336,7 @@ const home = {
     const h = new Date().getHours();
     const hello = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
     return `<div class="r-page">
-      <div class="page-h"><div><h1>My Water Service</h1><p class="page-sub">${hello}, ${esc(RESIDENT.name.split(' ')[0])} · ${esc(brgyName(RESIDENT.barangay))} · ${esc(myZone().name)}</p></div>
+      <div class="page-h"><div><h1>My Water Service</h1><p class="page-sub">${hello}, ${esc(RESIDENT.name.split(' ')[0])}, ${esc(brgyName(RESIDENT.barangay))}, ${esc(myZone().name)}</p></div>
         <div class="page-a"><a class="btn btn--primary btn--sm" href="#/r/report">${icon('plus', 15)} Report a problem</a></div></div>
       <div class="kgrid rkgrid" data-region="kpis">${homeStatus()}${homeTiles()}</div>
       <div class="r-alert" data-region="safetyAlert">${homeSafetyAlert()}</div>
@@ -396,7 +397,7 @@ function rpStep(d) {
         (t) => `<label class="cat ${d.type === t.id ? 'is-on' : ''}"><input type="radio" name="type" value="${t.id}" ${d.type === t.id ? 'checked' : ''} data-change="rp-type"/>${icon(t.icon, 22)}<span>${t.label}</span></label>`
       ).join('')}</div>`;
   if (d.step === 2)
-    return `<h3 class="rp-q">Tell us a bit more</h3><p class="rp-hint">${esc(reportTypeLabel(d.type))} · this helps the crew understand the problem.</p>
+    return `<h3 class="rp-q">Tell us a bit more</h3><p class="rp-hint">${esc(reportTypeLabel(d.type))}, this helps the crew understand the problem.</p>
       ${field('What did you notice?', `<textarea id="rp-desc" rows="3" data-input="rp-desc" placeholder="e.g. Very weak flow from all faucets since 8 AM" maxlength="500">${esc(d.description)}</textarea>`, { id: 'rp-desc', hint: 'How long has it been happening? Are your neighbours affected too?', optional: true })}
       ${field('When did you notice it?', `<input type="datetime-local" id="rp-when" value="${d.observedAt}" max="${toLocalInput(Date.now())}" data-input="rp-when"/>`, { id: 'rp-when', req: true })}
       ${nav(`<button type="button" class="btn btn--primary" data-action="rp-next">Next ${icon('arrow', 16)}</button>`)}`;
@@ -441,7 +442,7 @@ function rpSent(id) {
   if (!r) return '';
   return `<div class="rp-sent">
     <span class="rp-sent-ic">${icon('check-circle', 30)}</span>
-    <div><h3 class="rp-q">Report sent</h3><p class="rp-hint">${esc(reportTypeLabel(r.type))} · ${esc(r.location)} · Report ${r.id}</p>
+    <div><h3 class="rp-q">Report sent</h3><p class="rp-hint">${esc(reportTypeLabel(r.type))}, ${esc(r.location)}, Report ${r.id}</p>
       <p class="rp-next-t">Your water provider will review it together with their sensor readings. We will notify you at every step.</p></div>
     <div class="rp-sent-a"><a class="btn btn--primary" href="#/r/reports/${r.id}" data-action="rp-done-track" data-id="${r.id}">Track this report</a><button type="button" class="btn btn--ghost" data-action="rp-again">Report another problem</button></div>
   </div>`;
@@ -627,8 +628,8 @@ const reports = {
       const last = r.updates[r.updates.length - 1];
       return `<a class="rrep-row" href="#/r/reports/${r.id}">
         <span class="rrep-ic">${icon(REP_ICON[r.type] || 'more', 20)}</span>
-        <span class="rrep-main"><strong>${esc(reportTypeLabel(r.type))}</strong><span>${esc(r.location)} · sent ${relTime(r.submittedAt)}</span></span>
-        <span class="rrep-prog"><span class="pmini" aria-hidden="true">${REPORT_STEPS.map((_, k) => `<span class="${k <= i ? 'on' : ''}"></span>`).join('')}</span><small>Step ${i + 1} of ${REPORT_STEPS.length} · ${REP_STEP_WORDS[r.status] || ''}</small></span>
+        <span class="rrep-main"><strong>${esc(reportTypeLabel(r.type))}</strong><span>${esc(r.location)}, sent ${relTime(r.submittedAt)}</span></span>
+        <span class="rrep-prog"><span class="pmini" aria-hidden="true">${REPORT_STEPS.map((_, k) => `<span class="${k <= i ? 'on' : ''}"></span>`).join('')}</span><small>Step ${i + 1} of ${REPORT_STEPS.length}, ${REP_STEP_WORDS[r.status] || ''}</small></span>
         <span class="rrep-st">${status(rs.sev, rs.label)}<small>${last ? `Updated ${relTime(last.at)}` : ''}</small></span>
         ${icon('chev-r', 18)}
       </a>`;
@@ -673,7 +674,7 @@ const reportDetail = {
       }).join('')}</ol></div></section>`;
     return `<div class="r-page">
       <a class="back" href="#/r/reports">${icon('chev-l', 16)} My Reports</a>
-      <div class="page-h"><div><h1>${esc(reportTypeLabel(r.type))}</h1><p class="page-sub">${esc(r.location)} · Report ${r.id}</p></div><div class="page-a">${status(rs.sev, rs.label, { lg: true })}</div></div>
+      <div class="page-h"><div><h1>${esc(reportTypeLabel(r.type))}</h1><p class="page-sub">${esc(r.location)}, Report ${r.id}</p></div><div class="page-a">${status(rs.sev, rs.label, { lg: true })}</div></div>
       ${
         askVerify
           ? `<section class="verify" aria-labelledby="vq"><h2 id="vq">Is your water back?</h2><p>Your water provider says the repair is done. Your answer tells them whether the problem is really fixed.</p>
@@ -776,17 +777,82 @@ function billBreakdown() {
 function billResult() {
   const total = waterBill(billM3, billClass);
   const rows = billBreakdown();
-  return `<div class="bill-total"><span>Estimated monthly bill</span><strong>₱${fmt(total, 2)}</strong><em>${fmt(billM3, 1)} m³ · ${esc(billClass)}</em></div>
+  return `<div class="bill-total"><span>Estimated monthly bill</span><strong>₱${fmt(total, 2)}</strong><em>${fmt(billM3, 1)} m³, ${esc(billClass)}</em></div>
     <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Consumption block</th><th class="num">m³</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>
     ${rows.map(([l, m3, amt, min, rate]) => `<tr><td>${esc(l)}</td><td class="num">${fmt(m3, 1)}</td><td class="num">${min ? 'flat' : `₱${fmt(rate, 2)}/m³`}</td><td class="num">₱${fmt(amt, 2)}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
+// Monthly meter readings recorded by the water district (staff enter them per household).
+// Offline mode keeps them in this browser under the demo resident.
+const READ_TTL = 60000;
+let myRd = { status: 'idle', list: [], at: 0, error: '' };
+const rdMonth = (k, o = { month: 'long', year: 'numeric' }) => new Date(`${k}-01T12:00:00`).toLocaleDateString('en-US', o);
+async function loadMyReadings(force = false) {
+  if (myRd.status === 'loading' || (!force && myRd.status === 'ready' && Date.now() - myRd.at < READ_TTL)) return;
+  myRd = { ...myRd, status: 'loading' };
+  try {
+    let list;
+    if (B.FB_ENABLED) list = await B.myReadings();
+    else {
+      try {
+        list = JSON.parse(localStorage.getItem('samaragos.meterReadings') || '[]').filter((r) => r.uid === 'demo-resident');
+      } catch (e) {
+        list = [];
+      }
+    }
+    list.sort((a, b) => (a.month < b.month ? -1 : 1));
+    myRd = { status: 'ready', list, at: Date.now(), error: '' };
+    // Start the estimator from the latest real reading.
+    if (list.length && !billTouched) billM3 = list[list.length - 1].m3;
+  } catch (e) {
+    console.error(e);
+    myRd = { status: 'error', list: [], at: Date.now(), error: e?.code === 'permission-denied' ? 'permission' : 'other' };
+  }
+  const box = document.getElementById('my-readings');
+  if (box) box.innerHTML = myReadingsHtml();
+  const o = document.getElementById('bill-out');
+  const inp = document.getElementById('bill-m3');
+  if (o && inp && !billTouched) (inp.value = billM3), (o.innerHTML = billResult());
+}
+let billTouched = false;
+
+function myReadingsHtml() {
+  if (myRd.status === 'idle' || myRd.status === 'loading') return card('My meter readings', '<div class="skel" role="status"><span></span><span></span><span class="sr-only">Loading your meter readings</span></div>');
+  if (myRd.status === 'error')
+    return card('My meter readings', empty('Could not load your meter readings', myRd.error === 'permission' ? 'Your account cannot read meter readings yet. Please try again later.' : 'Check your connection and try again.', 'alert', `<button class="btn btn--outline btn--sm" data-action="rd-retry">Try again</button>`));
+  const list = myRd.list;
+  if (!list.length)
+    return card('My meter readings', `<p class="rd-none">No meter readings recorded for your account yet. ${esc(UTILITY.name)} records your reading each month and it will appear here. Meanwhile, estimate your bill below.</p>`, { actions: src('MANUAL') });
+  const last = list[list.length - 1];
+  const prev = list[list.length - 2];
+  const recent = list.slice(-6);
+  const avg = recent.reduce((n, r) => n + r.m3, 0) / recent.length;
+  const delta = prev ? ((last.m3 - prev.m3) / (prev.m3 || 1)) * 100 : null;
+  return card(
+    'My meter readings',
+    `<dl class="rd-sum">
+      <div><dt>${esc(rdMonth(last.month, { month: 'long', year: 'numeric' }))}</dt><dd>${fmt(last.m3, 1)} m³</dd><span>Estimated bill ₱${fmt(waterBill(last.m3), 2)}</span></div>
+      <div><dt>Versus last month</dt><dd>${delta == null ? '—' : `${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta), 0)}%`}</dd><span>${prev ? `${fmt(prev.m3, 1)} m³ in ${esc(rdMonth(prev.month, { month: 'long' }))}` : 'First recorded month'}</span></div>
+      <div><dt>Average</dt><dd>${fmt(avg, 1)} m³</dd><span>Last ${recent.length} month${recent.length === 1 ? '' : 's'}, city average ${fmt(CWD_FACTS.avgM3PerConnection, 1)} m³</span></div>
+    </dl>
+    ${barChart({ id: 'rd-chart', label: 'My monthly water consumption', bars: recent.map((r) => ({ label: rdMonth(r.month, { month: 'short' }), value: r.m3, color: r === last ? '#1E3A5F' : '#B8C4D3', showValue: true })), w: 1000, h: 160, yFmt: (v) => `${fmt(v, 0)}` })}
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Month</th><th class="num">Consumption</th><th class="num">Estimated bill</th></tr></thead><tbody>${list
+      .slice()
+      .reverse()
+      .map((r) => `<tr><td>${esc(rdMonth(r.month))}</td><td class="num">${fmt(r.m3, 1)} m³</td><td class="num">₱${fmt(waterBill(r.m3), 2)}</td></tr>`)
+      .join('')}</tbody></table></div>
+    <p class="fine">Readings are recorded by ${esc(UTILITY.name)}. Bills are estimated at domestic rates; your official bill may include other charges.</p>`,
+    { actions: src('MANUAL') }
+  );
+}
+register({ 'rd-retry': () => loadMyReadings(true) });
+
 const consumption = {
   title: 'My Consumption',
   render() {
     return `<div class="r-page">
-      <div class="page-h"><div><h1>My Consumption</h1><p class="page-sub">${esc(UTILITY.name)} · water rates effective ${esc(WATER_RATES.effective)}</p></div></div>
-      ${alertBanner('info', 'Meter readings are not linked yet', 'Your monthly meter readings will appear here once your account is connected to the water district’s billing records. Meanwhile, estimate your bill with the official rate schedule below.')}
+      <div class="page-h"><div><h1>My Consumption</h1><p class="page-sub">${esc(UTILITY.name)}, water rates effective ${esc(WATER_RATES.effective)}</p></div></div>
+      <div id="my-readings">${(setTimeout(() => loadMyReadings(), 0), myReadingsHtml())}</div>
       <div class="r-grid">
         <div class="r-col">${card(
           'Bill estimator',
@@ -815,7 +881,7 @@ const consumption = {
 };
 registerInputs({
   bill: (el) => {
-    if (el.id === 'bill-m3') billM3 = Math.max(0, +el.value || 0);
+    if (el.id === 'bill-m3') (billM3 = Math.max(0, +el.value || 0)), (billTouched = true);
     else billClass = el.value;
     const o = document.getElementById('bill-out');
     if (o) o.innerHTML = billResult();
@@ -863,7 +929,7 @@ function outlookMain() {
   // Chart-led split card: the answer on the left, the 2-day forecast on the right.
   const hero = `<section class="card rol-hero">
     <div class="rol-sum">
-      <span class="kpi-label">Next 24 hours · all areas</span>
+      <span class="kpi-label">Next 24 hours, all areas</span>
       <div class="rkp-v"><span class="sys-dot sys-dot--${SEV[o.sev].cls}" aria-hidden="true"></span><strong>${OUTLOOK_TILE[fc.status]}</strong></div>
       <p class="rkp-h">${o.label}</p>
       <p class="rkp-p">${o.text}</p>
@@ -886,7 +952,7 @@ function outlookMain() {
           return `<article class="card rol-day">
             <div class="rol-day-h"><strong>${dayName(d.date, i)}</strong><span class="rol-wx-ic">${wIcon(w.icon, 22)}</span></div>
             <div class="rol-day-t">${fmt(d.tmax, 0)}°C</div>
-            <div class="rol-day-w">${w.text}${d.rain >= 1 ? ` · ${fmt(d.rain, 0)} mm rain` : ''}</div>
+            <div class="rol-day-w">${w.text}${d.rain >= 1 ? `, ${fmt(d.rain, 0)} mm rain` : ''}</div>
             <div class="rol-day-e ${bad ? 'is-warn' : ''}"><span class="sys-dot sys-dot--${bad ? 'warn' : 'ok'}" aria-hidden="true"></span>${weatherEffect(d)}</div>
           </article>`;
         })
