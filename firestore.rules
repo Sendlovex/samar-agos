@@ -78,6 +78,11 @@ service cloud.firestore {
       allow read: if signedIn();
       allow write: if isProvider();
     }
+    // Monthly meter readings per household: recorded by staff, visible to that household.
+    match /meterReadings/{id} {
+      allow read: if isProvider() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow write: if isProvider();
+    }
     match /system/{id} {
       allow read: if signedIn();
       allow write: if isProvider();

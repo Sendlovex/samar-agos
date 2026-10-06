@@ -78,6 +78,16 @@ const km = ([a, b], [c, d]) => Math.hypot((a - c) * 111.32, (b - d) * 111.32 * M
 const servedPopIII = SERVED_BARANGAYS.filter((b) => b.level === 'III').reduce((n, b) => n + b.pop2020, 0);
 const BASE_DEMAND_MLD = CWD_FACTS.productionM3Year2022 / 365 / 1000; // ≈ 9.6 ML/day incl. losses
 
+// Service zones: the 26 served barangays grouped by area of the network. CWD has not published its
+// distribution zones, so this grouping follows geography and the supply route from the reservoir.
+export const SERVICE_ZONES = [
+  { id: 'z1', name: 'Zone 1', area: 'Poblacion', desc: 'City centre around the Poblacion 13 reservoir', barangays: ['poblacion-1', 'poblacion-2', 'poblacion-3', 'poblacion-4', 'poblacion-5', 'poblacion-6', 'poblacion-7', 'poblacion-8', 'poblacion-9', 'poblacion-10', 'poblacion-11', 'poblacion-12', 'poblacion-13'] },
+  { id: 'z2', name: 'Zone 2', area: 'North', desc: 'Mercedes to San Andres, Maulong and Payao', barangays: ['san-pablo', 'munoz', 'mercedes', 'canlapwas', 'san-andres', 'maulong', 'payao'] },
+  { id: 'z3', name: 'Zone 3', area: 'South', desc: 'Guindaponan to Bunuanan and Lagundi', barangays: ['guindaponan', 'guinsorongan', 'bunuanan', 'lagundi'] },
+  { id: 'z4', name: 'Zone 4', area: 'Darahuway islands', desc: 'Fed by the Cogao booster through the submarine line', barangays: ['darahuway-gote', 'darahuway-daco'] },
+];
+export const serviceZoneOf = (barangayId) => SERVICE_ZONES.find((g) => g.barangays.includes(barangayId)) || null;
+
 export const ZONES = SERVED_BARANGAYS.map((b) => {
   const poly = llPoly(b.ring);
   const center = b.center || b.ring[0];
@@ -102,6 +112,7 @@ export const ZONES = SERVED_BARANGAYS.map((b) => {
     baseFlow,
     poly,
     label: centroid(poly),
+    group: serviceZoneOf(b.id)?.id || null,
   };
 });
 export const zoneById = (id) => ZONES.find((z) => z.id === id);

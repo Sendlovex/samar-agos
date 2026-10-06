@@ -326,9 +326,9 @@ export const WQ_LAB = [
 // Sampling points follow CWD's Water Safety Plan 2022: treated water at Kulador, storage at the
 // Poblacion 13 reservoir, and random household taps in the distribution network.
 export const WQ_STATIONS = [
-  { id: 'WQ-1', name: 'Kulador plant outlet', where: 'Kulador Treatment Plant · after chlorination' },
-  { id: 'WQ-2', name: 'Poblacion 13 reservoir', where: 'Ground reservoir outlet · 440 m³' },
-  { id: 'WQ-3', name: 'Household taps', where: 'Distribution network · random daily sampling' },
+  { id: 'WQ-1', name: 'Kulador plant outlet', where: 'Kulador Treatment Plant, after chlorination' },
+  { id: 'WQ-2', name: 'Poblacion 13 reservoir', where: 'Ground reservoir outlet, 440 m³' },
+  { id: 'WQ-3', name: 'Household taps', where: 'Distribution network, random daily sampling' },
 ];
 // Typical values per point (chlorine decays and water warms slightly downstream).
 const WQ_TARGET = {

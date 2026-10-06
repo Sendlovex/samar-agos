@@ -1,6 +1,6 @@
 // Provider portal: overview dashboard, operations, advisories, assets, analytics.
 import * as S from '../store.js';
-import { ZONES, zoneById, UTILITY, reportTypeLabel, REPORT_TYPES, CWD_FACTS } from '../data.js';
+import { ZONES, zoneById, UTILITY, reportTypeLabel, REPORT_TYPES, CWD_FACTS, SERVICE_ZONES } from '../data.js';
 import { icon, status, src, card, kpi, empty, tabs, table, field, openModal, closeOverlay, register, registerInputs, formData, updatedAgo, priorityBadge, sevBadge, alertBanner, SEV, confirmDialog } from '../ui.js';
 import { lineChart, barChart, sparkline, gaugeBar } from '../charts.js';
 import { renderMap, DEFAULT_LAYERS, assetLiveStatus } from '../map.js';
@@ -10,6 +10,7 @@ import { incidentViews } from './provider-incidents.js';
 import { forecastViews } from './provider-forecast.js';
 import { safetyViews } from './provider-safety.js';
 import { ASSET_CATEGORIES, categoryOf, assetLifecycle, assetArt } from '../assetinfo.js';
+import './provider-households.js';
 import { openAdvisoryModal, openWorkOrderModal, incStatus, woStatusBadge, ZONE_COLORS, incidentTable } from './provider-shared.js';
 
 const st = () => S.getState();
@@ -115,42 +116,40 @@ const RES_MIN_PCT = Math.round(S.MIN_RESERVE * 100);
 const OPS_INK = '#1E3A5F';
 const OPS_SLATE = '#8A9BB0';
 
+// Priority 1: one primary container for storage, supported by four smaller ones.
 function opsStrip() {
-  const s = st();
-  const t = s.tele;
-  const lvl = t.volML / S.RES_CAP_ML;
-  const net = t.production + t.transfer - t.demand;
-  const cell = (label, tag, value, sub, sev) => `<div class="ops-cell"><div class="ops-cell-h"><span>${label}</span>${src(tag)}</div><div class="ops-cell-v">${sev ? `<span class="sys-dot sys-dot--${SEV[sev].cls}" aria-hidden="true"></span>` : ''}${value}</div><div class="ops-cell-s">${sub}</div></div>`;
-  return `<div class="ops-strip">
-    ${cell('Reservoir level', 'SIMULATED', pct(lvl), `${fmtL(t.volML * 1e6)} of 440,000 L`, levelSev(lvl))}
-    ${cell('Production', 'SIMULATED', `${fmt(t.production + t.transfer, 2)}<small>ML/day</small>`, t.transfer ? `incl. ${fmt(t.transfer, 2)} by tanker` : `Capacity ${fmt(S.productionCapacity(), 2)} ML/day`)}
-    ${cell('Demand', 'ESTIMATED', `${fmt(t.demand, 2)}<small>ML/day</small>`, `incl. ${fmt(S.leakLoss(), 2)} ML/day est. losses`)}
-    ${cell('Net balance', 'ESTIMATED', `${net >= 0 ? '+' : '−'}${fmt(Math.abs(net), 2)}<small>ML/day</small>`, net >= 0 ? 'Storage stable or filling' : 'Storage drawing down', net < -0.2 ? 'warning' : null)}
-    ${cell('Reserve', 'ESTIMATED', `${fmt(t.reserveHours, 0)}<small>hours</small>`, 'All storage at current demand', t.reserveHours < 10 ? 'critical' : t.reserveHours < 14 ? 'warning' : null)}
-  </div>`;
-}
-
-function opsReservoir() {
   const s = st();
   const t = s.tele;
   const lvl = t.volML / S.RES_CAP_ML;
   const sev = levelSev(lvl);
   const usable = Math.max(0, t.volML - S.MIN_RESERVE * S.RES_CAP_ML);
-  const lv = every(s.history.level, 3).map((v) => v * 100);
-  const n = lv.length;
-  return `<div class="ops-res">
-      <div class="ops-tank" aria-hidden="true"><div class="ops-tank-fill" style="height:${lvl * 100}%"></div><i class="ops-tank-min" style="bottom:${RES_MIN_PCT}%"></i><span>${pct(lvl)}</span></div>
-      <dl class="kv kv--3 ops-res-kv">
-        <div><dt>Status</dt><dd>${dstat(sev, SEV[sev].label)}</dd></div>
-        <div><dt>Current volume</dt><dd>${fmtL(t.volML * 1e6)}</dd></div>
-        <div><dt>Capacity</dt><dd>440,000 L ${src('MANUAL')}</dd></div>
-        <div><dt title="Volume above the 100 m³ firefighting reserve">Usable storage</dt><dd>${fmtL(usable * 1e6)}</dd></div>
+  const net = t.production + t.transfer - t.demand;
+  const low = ZONES.filter((z) => s.tele.zones[z.id] && s.tele.zones[z.id].status !== 'normal');
+  const flag = sev === 'critical' ? ['crit', 'Below reserve'] : sev === 'warning' ? ['warn', 'Low level'] : ['ok', 'Normal'];
+  return `<section class="kp-primary">
+      <div class="kpi-top"><span class="kpi-label">Poblacion 13 Reservoir</span>${src('SIMULATED')}</div>
+      <div class="kp-main"><div><div class="kpi-value kpi-value--xl">${Math.round(lvl * 100)}<span class="kpi-unit">% full</span></div>
+        <div class="kpi-sub">${fmtL(t.volML * 1e6)} of 440,000 L</div></div></div>
+      ${meter(lvl * 100, RES_MIN_PCT)}
+      <dl class="kp-meta">
+        <div><dt>Usable</dt><dd>${fmtL(usable * 1e6)}</dd></div>
         <div><dt>Inflow</dt><dd>${fmt(S.mlToLs(t.production + t.transfer), 0)} L/s</dd></div>
         <div><dt>Outflow</dt><dd>${fmt(S.mlToLs(t.demand), 0)} L/s</dd></div>
       </dl>
-    </div>
-    ${lineChart({ id: 'ops-level', label: 'Poblacion 13 reservoir level, last 24 hours', series: [{ name: 'Reservoir level', color: OPS_INK, values: lv, area: true, endLabel: true }], labels: lv.map((_, i) => `${(((i - n + 1) * 15) / 60).toFixed(1)} h`), xTicks: hoursTicks(n), thresholds: [{ y: RES_MIN_PCT, label: 'Firefighting reserve 100 m³', color: '#C0262D' }], yMin: 0, yMax: 100, yFmt: (v) => `${Math.round(v)}%`, h: 210 })}
-    <div class="chart-cap">Level, last 24 hours · updated ${updatedAgo(t.lastUpdate)}</div>`;
+      <div class="kp-foot"><span>Lasts <strong>${fmt(t.reserveHours, 0)} ${Math.round(t.reserveHours) === 1 ? 'hour' : 'hours'}</strong> at current demand</span><span class="kp-flag kp-flag--${flag[0]}">${flag[1]}</span></div>
+    </section>
+    ${kpi({ label: 'Production', value: fmt(t.production + t.transfer, 2), unit: 'ML/day', source: 'SIMULATED', sub: t.transfer ? `Includes ${fmt(t.transfer, 2)} ML/day by tanker` : `Capacity ${fmt(S.productionCapacity(), 2)} ML/day` })}
+    ${kpi({ label: 'Demand', value: fmt(t.demand, 2), unit: 'ML/day', source: 'ESTIMATED', sub: `Includes ${fmt(S.leakLoss(), 2)} ML/day estimated losses` })}
+    ${kpi({ label: 'Net balance', value: `${net >= 0 ? '+' : '−'}${fmt(Math.abs(net), 2)}`, unit: 'ML/day', source: 'ESTIMATED', sub: net >= 0 ? 'Storage stable or filling' : '<span class="txt-warn">Storage drawing down</span>', sev: net < -0.2 ? 'warning' : null })}
+    ${kpi({ label: 'Low pressure', value: low.length, unit: `of ${ZONES.length} barangays`, source: 'SIMULATED', sub: low.length ? `<span class="txt-warn">${esc(low.slice(0, 2).map((z) => z.short).join(', '))}${low.length > 2 ? ` and ${low.length - 2} more` : ''}</span>` : 'All barangays within normal range', sev: low.length ? 'warning' : null })}`;
+}
+
+function opsReservoir() {
+  const s = st();
+  const lv = every(s.history.level, 3).map((v) => v * 100);
+  const n = lv.length;
+  return `${lineChart({ id: 'ops-level', label: 'Poblacion 13 reservoir level, last 24 hours', series: [{ name: 'Reservoir level', color: OPS_INK, values: lv, area: true, endLabel: true }], labels: lv.map((_, i) => `${(((i - n + 1) * 15) / 60).toFixed(1)} h`), xTicks: hoursTicks(n), thresholds: [{ y: RES_MIN_PCT, label: 'Firefighting reserve 100 m³', color: '#C0262D' }], yMin: 0, yMax: 100, yFmt: (v) => `${Math.round(v)}%`, h: 250 })}
+    <div class="chart-cap">Updated ${updatedAgo(s.tele.lastUpdate)}</div>`;
 }
 
 function opsSupply() {
@@ -168,7 +167,7 @@ function opsSupply() {
       <div><dt>Peak demand</dt><dd>${fmt(Math.max(...h.demand), 2)} ML/day</dd></div>
       <div><dt>Hours in deficit</dt><dd>${fmt(deficitH, 0)} of 24</dd></div>
     </dl>
-    <div class="chart-cap">Production ${src('SIMULATED')} · Demand ${src('ESTIMATED')}</div>`;
+    <div class="chart-cap">Production ${src('SIMULATED')} Demand ${src('ESTIMATED')}</div>`;
 }
 
 // Water sources (CWD Water Safety Plan 2022). Rated capacity is published; current output is simulated.
@@ -178,11 +177,12 @@ function opsSources() {
   const carDown = s.pumpsOffline.some((id) => id.startsWith('PS-CAR'));
   const rows = [
     { name: 'Caramayon I & II springs', sub: 'Pumped, Brgy. Lobo', rated: '91 L/s pumped (spring 140 L/s)', now: carDown ? 0 : 91, down: carDown, why: 'Pumps stopped' },
-    { name: 'Masacpasac spring', sub: 'Brgy. Cawayan · ~64% of production', rated: '55 L/s rated', now: 40 * inflow },
+    { name: 'Masacpasac spring', sub: 'Brgy. Cawayan, about 64% of production', rated: '55 L/s rated', now: 40 * inflow },
     { name: 'Kulador treatment plant', sub: 'Antiao River', rated: '4,000 m³/day (46 L/s) design', now: s.factors.kuladorOff ? 0 : 20 * inflow, down: s.factors.kuladorOff, why: 'River too turbid to treat' },
     { name: 'Deep wells', sub: 'Tumalistis, Executive Heights, Payao', rated: '7.5 L/s combined', now: 4.5 + 1.5 * (3.5 / 24) + 1.5 },
   ];
   const total = rows.reduce((n, r) => n + r.now, 0);
+  rows.sort((a, b) => !!b.down - !!a.down);
   return `${table(
     [
       { label: 'Source', render: (r) => `<div class="it-t">${esc(r.name)}</div><div class="it-s">${esc(r.sub)}</div>` },
@@ -191,20 +191,22 @@ function opsSources() {
       { label: 'Status', render: (r) => dstat(r.down ? 'critical' : r.now < 1 ? 'offline' : 'normal', r.down ? r.why : 'Producing') },
     ],
     rows
-  )}<div class="chart-cap">Total available ${fmt(total, 0)} L/s (${fmt(S.productionCapacity(), 2)} ML/day) · rated capacities from the CWD Water Safety Plan 2022 ${src('SIMULATED')}</div>`;
+  )}<div class="chart-cap">Total available ${fmt(total, 0)} L/s (${fmt(S.productionCapacity(), 2)} ML/day). Rated capacities from the CWD Water Safety Plan 2022.</div>`;
 }
 
 function opsPumps() {
   const s = st();
   return table(
     [
-      { label: 'Pump station', render: (r) => `<div class="it-t">${esc(r.name)}</div><div class="it-s">${r.id} · ${esc(r.p.units)}</div>` },
+      { label: 'Pump station', render: (r) => `<div class="it-t">${esc(r.name)}</div><div class="it-s mono">${r.id}</div>` },
       { label: 'Status', render: (r) => dstat(r.p.status === 'offline' ? 'critical' : 'normal', r.p.status === 'offline' ? 'Failure' : 'Running') },
       { label: 'Flow', num: true, render: (r) => (r.p.flowLs != null ? `${fmt(r.p.flowLs, 1)} L/s` : '<span class="it-s">not metered</span>') },
       { label: 'Vibration', num: true, render: (r) => (r.p.vibration > 7 ? `<span class="txt-warn">${fmt(r.p.vibration, 1)} mm/s</span>` : `${fmt(r.p.vibration, 1)} mm/s`) },
       { label: 'Power', num: true, render: (r) => `${fmt(r.p.powerKw, 1)} kW` },
     ],
-    Object.entries(s.tele.pumps).map(([id, p]) => ({ id, p, name: s.assets.find((a) => a.id === id)?.name || id })),
+    Object.entries(s.tele.pumps)
+      .map(([id, p]) => ({ id, p, name: s.assets.find((a) => a.id === id)?.name || id }))
+      .sort((a, b) => (b.p.status === 'offline') - (a.p.status === 'offline') || b.p.vibration - a.p.vibration),
     { empty: 'No pumps registered' }
   );
 }
@@ -214,7 +216,7 @@ function opsZones() {
   const zt = (z) => s.tele.zones[z.id];
   return table(
     [
-      { label: 'Barangay', render: (z) => `<div class="it-t">${esc(z.short)}</div><div class="it-s">${z.level === 'I' ? 'Level I (communal)' : 'Level III'} · pop. ${fmt(z.pop2020)}</div>` },
+      { label: 'Barangay', render: (z) => `<div class="it-t">${esc(z.short)}</div><div class="it-s">${z.level === 'I' ? 'Level I (communal)' : 'Level III'}, pop. ${fmt(z.pop2020)}</div>` },
       { label: 'Status', render: (z) => dstat(zt(z).status, zt(z).status === 'normal' ? 'Normal' : 'Low pressure') },
       { label: 'Pressure', num: true, render: (z) => `<strong>${fmt(zt(z).pressure, 0)}</strong> PSI<div class="it-s">normal ~${z.basePressure}</div>` },
       { label: 'Last 6 hours', render: (z) => sparkline(every(last(s.history.pressure[z.id], 72), 3), { color: OPS_INK, w: 120, h: 28, min: 0, max: 50 }) },
@@ -222,7 +224,8 @@ function opsZones() {
       { label: 'vs expected', num: true, render: (z) => `${zt(z).flowDeltaPct >= 0 ? '+' : '−'}${fmt(Math.abs(zt(z).flowDeltaPct), 0)}%` },
       { label: 'Connections', num: true, render: (z) => (z.connections ? `${fmt(z.connections)}<div class="it-s">estimated</div>` : '<span class="it-s">communal</span>') },
     ],
-    ZONES
+    // Problem barangays first, then lowest pressure relative to normal.
+    [...ZONES].sort((a, b) => (zt(b).status !== 'normal') - (zt(a).status !== 'normal') || zt(a).pressure / a.basePressure - zt(b).pressure / b.basePressure)
   );
 }
 
@@ -245,7 +248,7 @@ function opsEmergency() {
     rows,
     { empty: 'No emergency storage recorded' }
   )}
-  ${backup.active ? `<div class="ops-backup"><div><span class="it-t">Water tanker deliveries</span> ${src('SIMULATED')}<div class="it-s">Demo scenario: tankers supplementing supply.</div></div><div class="ops-backup-v">${fmtL(backup.poolML * 1e6)} remaining · ${dstat('info', 'Supplying')}</div></div>` : ''}
+  ${backup.active ? `<div class="ops-backup"><div><span class="it-t">Water tanker deliveries</span> ${src('SIMULATED')}<div class="it-s">Demo scenario: tankers supplementing supply.</div></div><div class="ops-backup-v">${fmtL(backup.poolML * 1e6)} remaining ${dstat('info', 'Supplying')}</div></div>` : ''}
   <div class="ops-add"><button class="btn btn--outline btn--sm" data-action="et-new">${icon('plus', 15)} Add emergency storage</button></div>`;
 }
 
@@ -255,17 +258,23 @@ const operations = {
   render() {
     const R = this.regions;
     const tag = src('SIMULATED');
-    return `<div class="page-h"><div><h1>Storage & Supply Monitoring</h1><p class="page-sub">Catbalogan Water District system: sources, reservoir, pumps and barangay pressure · ${tag} values come from the SAMAR-AGOS simulator calibrated to CWD's published figures, not live sensors.</p></div></div>
-      <div data-region="strip">${R.strip()}</div>
-      <div class="ops-grid ops-grid--eq">
-        ${card('Poblacion 13 Reservoir', `<div data-region="res">${R.res()}</div>`, { sub: 'RES-P13 · 440 m³ ground reservoir, 35 m elevation', actions: tag })}
-        ${card('Production vs demand', `<div data-region="supply">${R.supply()}</div>`, { sub: 'Last 24 hours', actions: tag })}
-      </div>
-      <div class="ops-grid ops-grid--eq">
+    const s = st();
+    // Priority 2: whatever needs attention moves up, directly under the summary.
+    const lowP = ZONES.some((z) => s.tele.zones[z.id] && s.tele.zones[z.id].status !== 'normal');
+    const srcDown = s.pumpsOffline.length || s.factors.kuladorOff;
+    const zones = card('Barangay pressure and flow', `<div data-region="zones">${R.zones()}</div>`, { sub: `${ZONES.length} barangays served by CWD, sorted by need`, actions: tag });
+    const assets = `<div class="ops-grid ops-grid--eq">
         ${card('Water sources', `<div data-region="sources">${R.sources()}</div>`, { actions: tag })}
         ${card('Pump stations', `<div data-region="pumps">${R.pumps()}</div>`, { actions: tag })}
-      </div>
-      ${card('Barangay pressure & flow', `<div data-region="zones">${R.zones()}</div>`, { sub: '26 barangays served by CWD · pressure and flow simulated', actions: tag })}
+      </div>`;
+    const trends = `<div class="ops-grid ops-grid--eq">
+        ${card('Reservoir level', `<div data-region="res">${R.res()}</div>`, { sub: 'Last 24 hours', actions: tag })}
+        ${card('Production vs demand', `<div data-region="supply">${R.supply()}</div>`, { sub: 'Last 24 hours', actions: tag })}
+      </div>`;
+    const order = srcDown ? [assets, lowP ? zones : '', trends, lowP ? '' : zones] : lowP ? [zones, trends, assets] : [trends, assets, zones];
+    return `<div class="page-h"><div><h1>Storage & Supply Monitoring</h1><p class="page-sub">Sources, reservoir, pumps and barangay pressure for Catbalogan Water District.<br/>${tag} values come from the SAMAR-AGOS simulator calibrated to CWD's published figures, not live sensors.</p></div></div>
+      <div class="kgrid" data-region="strip">${R.strip()}</div>
+      ${order.join('')}
       ${card('Emergency water storage', `<div data-region="em">${R.em()}</div>`, { sub: 'Recorded by staff' })}`;
   },
 };
@@ -627,33 +636,91 @@ const assetDetail = {
 };
 
 // ---------------------------------------------------------------- ANALYTICS
+let pzZone = 'all';
+const PZ_ALARM = 26;
+const PZ_LABEL = { normal: 'Normal', warning: 'Low pressure', critical: 'Very low', offline: 'No data' };
+
+function pzCard(z) {
+  const s = st();
+  const raw = s.history.pressure[z.id].filter((v) => v != null);
+  const vals = every(s.history.pressure[z.id], 3);
+  const n = vals.length;
+  const t = s.tele.zones[z.id];
+  const sev = t?.status || 'offline';
+  const lo = raw.length ? Math.min(...raw) : null;
+  const avg = raw.length ? raw.reduce((a, b) => a + b, 0) / raw.length : null;
+  const below = raw.filter((v) => v < PZ_ALARM).length * 5; // samples are 5 sim-minutes apart
+  return `<section class="pz pz--click ${sev !== 'normal' ? 'is-bad' : ''}" data-action="brgy-open" data-id="${z.id}" role="button" tabindex="0" aria-label="Open ${esc(z.short)} households and consumption">
+    <div class="pz-h"><div><strong>${esc(z.short)}</strong><span>${z.level === 'I' ? 'Level I, communal supply' : `${fmt(z.connections)} connections`}</span></div>
+      <span class="pz-st pz-st--${SEV[sev].cls}">${PZ_LABEL[sev]}</span></div>
+    <div class="pz-now"><span class="pz-v">${t ? fmt(t.pressure, 0) : '—'}</span><span class="pz-u">PSI now</span></div>
+    <div class="pz-chart">${lineChart({ id: `an-pz-${z.id}`, label: `${z.short} pressure, last 24 hours`, series: [{ name: z.short, color: '#1E3A5F', values: vals, area: true }], labels: Array.from({ length: n }, (_, i) => `${(((i - n + 1) * 15) / 60).toFixed(1)} h`), xTicks: hoursTicks(n, 12), thresholds: [{ y: PZ_ALARM, label: '', color: '#9AA6B4' }], yMin: 0, yMax: 60, yTickCount: 3, yFmt: (v) => `${Math.round(v)}`, h: 120, pad: { l: 28, r: 6, t: 8, b: 22 } })}</div>
+    <dl class="pz-meta"><div><dt>24 h low</dt><dd>${lo != null ? `${fmt(lo, 0)} PSI` : '—'}</dd></div><div><dt>24 h avg</dt><dd>${avg != null ? `${fmt(avg, 0)} PSI` : '—'}</dd></div><div><dt>Below ${PZ_ALARM} PSI</dt><dd>${below ? hoursLabel(below / 60) : 'None'}</dd></div></dl>
+  </section>`;
+}
+
+// One section per service zone; the filter narrows the view to a single zone.
+function pzZoneStats(g) {
+  const s = st();
+  const list = ZONES.filter((z) => z.group === g.id);
+  const tz = list.map((z) => s.tele.zones[z.id]).filter(Boolean);
+  const low = list.filter((z) => s.tele.zones[z.id] && s.tele.zones[z.id].status !== 'normal');
+  const avg = tz.length ? tz.reduce((a, b) => a + b.pressure, 0) / tz.length : null;
+  return { list, low, avg, conn: list.reduce((n, z) => n + z.connections, 0) };
+}
+
+function pressureByZone() {
+  const stats = Object.fromEntries(SERVICE_ZONES.map((g) => [g.id, pzZoneStats(g)]));
+  const lowAll = SERVICE_ZONES.reduce((n, g) => n + stats[g.id].low.length, 0);
+  // Gauge icon: arc from 0 to 60 PSI filled to the zone's average, red tick at the 26 PSI alarm.
+  const gaugeIcon = (avg) => {
+    const pt = (v, r) => {
+      const a = Math.PI * (1 - Math.max(0, Math.min(60, v ?? 0)) / 60);
+      return `${(24 + r * Math.cos(a)).toFixed(1)} ${(26 - r * Math.sin(a)).toFixed(1)}`;
+    };
+    return `<svg class="pzf-g" viewBox="0 0 48 30" width="48" height="30" aria-hidden="true">
+      <path d="M4 26 A20 20 0 0 1 44 26" fill="none" stroke="currentColor" stroke-opacity=".2" stroke-width="4" stroke-linecap="round"/>
+      <path d="M4 26 A20 20 0 0 1 ${pt(avg, 20)}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+      <path d="M${pt(PZ_ALARM, 23)} L${pt(PZ_ALARM, 16)}" stroke="#C0262D" stroke-width="1.8"/>
+      <path d="M24 26 L${pt(avg, 12)}" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="24" cy="26" r="2.6" fill="currentColor"/>
+    </svg>`;
+  };
+  const chip = (id, name, sub, count, low, avg) =>
+    `<button class="pzf ${pzZone === id ? 'is-on' : ''} ${low ? 'has-low' : ''}" data-action="pz-zone" data-id="${id}" aria-pressed="${pzZone === id}">
+      <span class="pzf-p">${gaugeIcon(avg)}<span class="pzf-pv">${avg != null ? fmt(avg, 0) : '—'}</span><span class="pzf-pu">PSI avg</span></span>
+      <span class="pzf-t"><span class="pzf-n">${esc(name)}</span><span class="pzf-s">${esc(sub)}</span><span class="pzf-c">${count} barangays${low ? `, <b>${low} low</b>` : ''}</span></span>
+    </button>`;
+  const tAll = ZONES.map((z) => st().tele.zones[z.id]).filter(Boolean);
+  const avgAll = tAll.length ? tAll.reduce((a, b) => a + b.pressure, 0) / tAll.length : null;
+  const shown = pzZone === 'all' ? SERVICE_ZONES : SERVICE_ZONES.filter((g) => g.id === pzZone);
+  return `<div class="pzf-bar" role="group" aria-label="Filter by service zone">
+      ${chip('all', 'All zones', 'Whole network', ZONES.length, lowAll, avgAll)}
+      ${SERVICE_ZONES.map((g) => chip(g.id, g.name, g.area, stats[g.id].list.length, stats[g.id].low.length, stats[g.id].avg)).join('')}
+    </div>
+    ${shown
+      .map((g) => {
+        const x = stats[g.id];
+        return `<div class="pz-zone">
+          <div class="pz-zone-h"><div><h3>${esc(g.name)}<span>${esc(g.area)}</span></h3><p>${esc(g.desc)}</p></div>
+            <dl><div><dt>Barangays</dt><dd>${x.list.length}</dd></div><div><dt>Connections</dt><dd>${x.conn ? fmt(x.conn) : 'Communal'}</dd></div><div><dt>Avg. pressure</dt><dd>${x.avg != null ? `${fmt(x.avg, 0)} PSI` : '—'}</dd></div><div><dt>Low pressure</dt><dd class="${x.low.length ? 'pz-warn' : ''}">${x.low.length ? x.low.length : 'None'}</dd></div></dl></div>
+          <div class="pz-grid">${[...x.list].sort((a, b) => (st().tele.zones[b.id]?.status !== 'normal') - (st().tele.zones[a.id]?.status !== 'normal')).map(pzCard).join('')}</div>
+        </div>`;
+      })
+      .join('')}`;
+}
+
+register({
+  'pz-zone': (el) => {
+    pzZone = el.dataset.id;
+    const r = document.querySelector('[data-region="pressure"]');
+    if (r) r.innerHTML = pressureByZone();
+  },
+});
+
 const analytics = {
   title: 'Analytics',
-  regions: {
-    // One container per zone: current reading, 24 h range, time below alarm, and its own trend.
-    pressure() {
-      const s = st();
-      const ALARM = 26;
-      const label = { normal: 'Normal', warning: 'Low pressure', critical: 'Very low', offline: 'No data' };
-      return `<div class="pz-grid">${ZONES.map((z) => {
-        const raw = s.history.pressure[z.id].filter((v) => v != null);
-        const vals = every(s.history.pressure[z.id], 3);
-        const n = vals.length;
-        const t = s.tele.zones[z.id];
-        const sev = t?.status || 'offline';
-        const lo = raw.length ? Math.min(...raw) : null;
-        const avg = raw.length ? raw.reduce((a, b) => a + b, 0) / raw.length : null;
-        const below = raw.filter((v) => v < ALARM).length * 5; // samples are 5 sim-minutes apart
-        return `<section class="pz">
-          <div class="pz-h"><div><strong>${esc(z.short)}</strong><span>${esc(z.name.split('— ')[1] || '')} · ${fmt(z.connections)} connections</span></div>
-            <span class="pz-st"><span class="sys-dot sys-dot--${SEV[sev].cls}" aria-hidden="true"></span>${label[sev]}</span></div>
-          <div class="pz-now"><span class="pz-v">${t ? fmt(t.pressure, 0) : '—'}</span><span class="pz-u">PSI now</span></div>
-          <div class="pz-chart">${lineChart({ id: `an-pz-${z.id}`, label: `${z.short} pressure, last 24 hours`, series: [{ name: z.short, color: '#1E3A5F', values: vals, area: true }], labels: Array.from({ length: n }, (_, i) => `${(((i - n + 1) * 15) / 60).toFixed(1)} h`), xTicks: hoursTicks(n, 12), thresholds: [{ y: ALARM, label: '', color: '#9AA6B4' }], yMin: 0, yMax: 60, yTickCount: 3, yFmt: (v) => `${Math.round(v)}`, h: 120, pad: { l: 28, r: 6, t: 8, b: 22 } })}</div>
-          <dl class="pz-meta"><div><dt>24 h low</dt><dd>${lo != null ? `${fmt(lo, 0)} PSI` : '—'}</dd></div><div><dt>24 h avg</dt><dd>${avg != null ? `${fmt(avg, 0)} PSI` : '—'}</dd></div><div><dt>Below ${ALARM} PSI</dt><dd>${below ? hoursLabel(below / 60) : 'None'}</dd></div></dl>
-        </section>`;
-      }).join('')}</div>`;
-    },
-  },
+  regions: { pressure: pressureByZone },
   render() {
     const s = st();
     const typeCounts = REPORT_TYPES.map((t) => ({ label: t.label.replace('Unusual ', ''), value: s.reports.filter((r) => r.type === t.id).length })).filter((b) => b.value);
@@ -680,7 +747,7 @@ const analytics = {
           <div><dt>Coverage</dt><dd>${CWD_FACTS.barangaysServed} of ${CWD_FACTS.barangaysTotal} barangays · ${fmt(CWD_FACTS.networkKm, 1)} km of pipes</dd></div>
         </dl><p class="fine">Source: ${esc(CWD_FACTS.source)}; Water Safety Plan 2022.</p>`)}
       </div>
-      <div class="an-sec"><div><h2>Pressure by barangay</h2><p>Last 24 simulated hours · dashed line marks the ${26} PSI low-pressure alarm</p></div>${src('SIMULATED')}</div>
+      <div class="an-sec"><div><h2>Pressure by zone</h2><p>Last 24 simulated hours. The dashed line marks the ${PZ_ALARM} PSI low-pressure alarm. Select a zone to see only its barangays, or a barangay to see its households and consumption.</p></div>${src('SIMULATED')}</div>
       <div data-region="pressure">${this.regions.pressure()}</div>
       <div class="an-sec"><div><h2>Resident reports</h2><p>What residents report, and where</p></div>${src('RESIDENT REPORTED')}</div>
       <div class="ops-grid ops-grid--eq an-reports">

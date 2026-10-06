@@ -7,7 +7,6 @@ import { esc, fmt, fmtTime, relTime } from '../util.js';
 import { openAdvisoryModal } from './provider-shared.js';
 import { isDemoMode } from '../app.js';
 
-const dot = (sev) => `<span class="sys-dot sys-dot--${SEV[sev]?.cls || 'off'}" aria-hidden="true"></span>`;
 const val = (p, v = p.value) => (v == null ? '—' : `${fmt(v, p.d ?? 1)}${p.unit ? ` ${p.unit}` : ''}`);
 const VERDICT = {
   safe: { label: 'Safe to use', text: 'All readings are within drinking-water limits at every monitoring point.' },
@@ -40,27 +39,27 @@ function journey(ws) {
   const bad = ws.verdict === 'unsafe';
   const flow = bad ? '#A8865A' : '#5B9BD5'; // muddy vs clear water
   const nodes = [
-    { st: ws.stations[0], x: 455 },
-    { st: ws.stations[1], x: 745 },
-    { st: ws.stations[2], x: 872 },
+    { st: ws.stations[0], x: 470 },
+    { st: ws.stations[1], x: 750 },
+    { st: ws.stations[2], x: 880 },
   ];
   const node = ({ st, x }) => {
     const c = MARK[st.sev];
     const on = st.id === selStation;
-    return `<g class="ws-node ${on ? 'is-sel' : ''}" data-action="ws-station" data-id="${st.id}" role="button" tabindex="0" aria-label="${esc(st.name)}: ${st.sev === 'normal' ? 'within limits' : 'outside limits'}">
-      <path d="M${x} 118 Q ${(x + 560) / 2} ${x < 560 ? 40 : 30} 560 66" fill="none" stroke="#B8C4D3" stroke-width="1.4" stroke-dasharray="3 5" class="ws-link"/>
-      <line x1="${x}" y1="176" x2="${x}" y2="203" stroke="#7690B0" stroke-width="3"/>
-      <rect x="${x - 19}" y="138" width="38" height="38" rx="8" fill="#fff" stroke="${on ? '#0B2545' : '#7690B0'}" stroke-width="${on ? 2.4 : 1.6}"/>
-      <rect x="${x - 11}" y="146" width="22" height="11" rx="2" fill="#EEF2F7"/>
-      <circle cx="${x}" cy="167" r="4" fill="${c}"/>
-      <line x1="${x}" y1="138" x2="${x}" y2="124" stroke="#7690B0" stroke-width="1.6"/>
-      <path d="M${x - 7} 121 a9 9 0 0 1 14 0 M${x - 12} 116 a15 15 0 0 1 24 0" fill="none" stroke="#7690B0" stroke-width="1.4" stroke-linecap="round" class="ws-wave"/>
-      <rect x="${x - 34}" y="236" width="68" height="34" rx="8" fill="#fff" stroke="${on ? '#0B2545' : '#D6DEE8'}"/>
-      <text x="${x}" y="250" text-anchor="middle" class="ws-svg-id">${st.id}</text>
-      <circle cx="${x - 22}" cy="261" r="3.2" fill="${c}"/><text x="${x - 15}" y="264" class="ws-svg-s">${st.sev === 'normal' ? 'Within' : 'Outside'}</text>
+    const ok = st.sev === 'normal';
+    return `<g class="ws-node ${on ? 'is-sel' : ''}" data-action="ws-station" data-id="${st.id}" role="button" tabindex="0" aria-label="${esc(st.name)}: ${ok ? 'within limits' : 'outside limits'}">
+      <path d="M${x} 110 Q ${(x + 563) / 2} 40 ${x < 563 ? 540 : 590} 62" fill="none" stroke="#B8C4D3" stroke-width="1.4" stroke-dasharray="3 5" class="ws-link"/>
+      <line x1="${x}" y1="172" x2="${x}" y2="200" stroke="#7690B0" stroke-width="3"/>
+      <rect x="${x - 17}" y="136" width="34" height="36" rx="7" fill="#fff" stroke="${on ? '#0B2545' : '#7690B0'}" stroke-width="${on ? 2.4 : 1.6}"/>
+      <rect x="${x - 10}" y="143" width="20" height="10" rx="2" fill="#EEF2F7"/>
+      <circle cx="${x}" cy="163" r="3.5" fill="${c}"/>
+      <line x1="${x}" y1="136" x2="${x}" y2="122" stroke="#7690B0" stroke-width="1.6"/>
+      <path d="M${x - 7} 119 a9 9 0 0 1 14 0 M${x - 12} 114 a15 15 0 0 1 24 0" fill="none" stroke="#7690B0" stroke-width="1.4" stroke-linecap="round" class="ws-wave"/>
+      <text x="${x + 24}" y="150" class="ws-svg-id">${st.id}</text>
+      <text x="${x + 24}" y="165" class="ws-svg-s" style="fill:${ok ? '#6B7A8C' : '#C0262D'};font-weight:${ok ? 500 : 700}">${ok ? 'Within' : 'Outside'}</text>
     </g>`;
   };
-  return `<svg class="ws-journey" viewBox="0 0 1100 290" role="img" aria-label="Water journey from the river intake through treatment and storage to homes, with three IoT water-quality sensors">
+  return `<svg class="ws-journey" viewBox="0 6 1100 270" role="img" aria-label="Water journey from the river intake through treatment and storage to homes, with three IoT water-quality sensors">
     <defs>
       <linearGradient id="wsRes" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${bad ? '#D9C3A4' : '#BFDAF2'}"/><stop offset="1" stop-color="${bad ? '#B8946A' : '#6FA6DB'}"/></linearGradient>
     </defs>
@@ -68,7 +67,7 @@ function journey(ws) {
     <g>
       <path d="M520 70h86a20 20 0 0 0 0-40 28 28 0 0 0-53-8 22 22 0 0 0-33 21 14 14 0 0 0 0 27z" fill="#F4F7FB" stroke="#9FB2CA" stroke-width="1.6"/>
       <text x="563" y="56" text-anchor="middle" class="ws-svg-t">SAMAR-AGOS</text>
-      <text x="660" y="40" class="ws-svg-s">IoT cloud · readings every 5 min</text>
+      <text x="630" y="22" class="ws-svg-s">IoT cloud, readings every 5 minutes</text>
     </g>
     <!-- ground -->
     <line x1="0" y1="226" x2="1100" y2="226" stroke="#E3E8EF" stroke-width="1.5"/>
@@ -99,11 +98,11 @@ function journey(ws) {
     <text x="615" y="250" text-anchor="middle" class="ws-svg-t">Poblacion 13 reservoir</text>
     <text x="615" y="266" text-anchor="middle" class="ws-svg-s">440 m³ storage</text>
     <!-- homes -->
-    ${[960, 1010, 1060]
+    ${[975, 1025, 1075]
       .map((x, i) => `<g transform="translate(${x} ${i === 1 ? 150 : 160})"><path d="M-20 22 l20 -18 20 18" fill="none" stroke="#7690B0" stroke-width="1.6" stroke-linejoin="round"/><rect x="-15" y="21" width="30" height="${i === 1 ? 34 : 24}" fill="#fff" stroke="#7690B0" stroke-width="1.6"/><rect x="-4" y="${i === 1 ? 41 : 31}" width="8" height="${i === 1 ? 14 : 14}" fill="#EEF2F7" stroke="#9FB2CA"/></g>`)
       .join('')}
-    <text x="1010" y="250" text-anchor="middle" class="ws-svg-t">Homes</text>
-    <text x="1010" y="266" text-anchor="middle" class="ws-svg-s">26 barangays</text>
+    <text x="1025" y="250" text-anchor="middle" class="ws-svg-t">Homes</text>
+    <text x="1025" y="266" text-anchor="middle" class="ws-svg-s">26 barangays</text>
     ${nodes.map(node).join('')}
   </svg>`;
 }
@@ -141,11 +140,10 @@ function verdictStrip(ws) {
   return `<section class="ws-verdict ws-verdict--${ws.verdict}">
     <div class="ws-v-t"><span class="kpi-label">Water potability</span><strong>${v.label}</strong><span>${v.text}</span></div>
     <div class="ws-v-n">
-      <div><strong>${ws.stations.length}</strong><span>${ico('sensor', 15)} IoT sensors</span></div>
-      <div><strong>${ws.stations.length * S.WQ_PARAMS.length - ws.failures.filter((f) => f.station.id).length}/${ws.stations.length * S.WQ_PARAMS.length}</strong><span>${icon('check-circle', 15)} readings in range</span></div>
-      <div><strong>${ws.lab.every((l) => l.sev === 'normal') ? 'Clear' : 'Detected'}</strong><span>${ico('germ', 15)} lab bacteria test</span></div>
+      <div><span>IoT sensors</span><strong>${ws.stations.length}</strong></div>
+      <div><span>Readings in range</span><strong>${ws.stations.length * S.WQ_PARAMS.length - ws.failures.filter((f) => f.station.id).length} of ${ws.stations.length * S.WQ_PARAMS.length}</strong></div>
+      <div><span>Lab bacteria test</span><strong>${ws.lab.every((l) => l.sev === 'normal') ? 'Clear' : 'Detected'}</strong></div>
     </div>
-    <span class="kp-flag kp-flag--${SEV[SEV_OF[ws.verdict]].cls}">${ws.verdict === 'safe' ? 'Potable' : ws.verdict === 'caution' ? 'Monitor' : 'Action required'}</span>
   </section>`;
 }
 
@@ -153,7 +151,7 @@ function journeyCard(ws) {
   return card(
     'Water journey and sensors',
     `<div class="ws-j-wrap">${journey(ws)}</div>
-    <div class="ws-j-legend"><span><i class="ws-l-flow"></i>Water flow</span><span><i class="ws-l-link"></i>Wireless sensor link</span><span>${dot('normal')}Within limits</span><span>${dot('critical')}Outside limits</span><span class="muted">Select a sensor to see its readings</span></div>`,
+    <div class="ws-j-legend"><span><i class="ws-l-flow"></i>Water flow</span><span><i class="ws-l-link"></i>Wireless sensor link</span><span class="ws-j-hint">Select a sensor to see its readings</span></div>`,
     { sub: 'Online analysers check the water three times before it reaches homes', actions: src('SIMULATED IoT') }
   );
 }
@@ -165,15 +163,15 @@ function gaugesCard(ws) {
     `<div class="ws-gauges">${st.params
       .map(
         (p) => `<div class="ws-g ${p.sev !== 'normal' ? 'is-bad' : ''}">
-        <div class="ws-g-h"><span class="ws-g-ic">${ico(p.key, 18)}</span><span>${esc(p.short || p.label)}</span>${dot(p.sev)}</div>
+        <div class="ws-g-h"><span class="ws-g-ic">${ico(p.key, 18)}</span><span>${esc(p.short || p.label)}</span></div>
         ${gauge(p)}
         <div class="ws-g-v">${fmt(p.value, p.d ?? 1)}<small>${esc(p.unit)}</small></div>
-        <div class="ws-g-s">Safe ${esc(p.std.replace(' (operational)', ''))}</div>
+        <div class="ws-g-s">${p.sev === 'normal' ? 'Safe' : '<b>Outside limit</b>, safe'} ${esc(p.std.replace(' (operational)', ''))}</div>
       </div>`
       )
       .join('')}</div>
     <div class="ws-g-legend"><span><i class="ws-l-band"></i>Safe range</span><span><i class="ws-l-mark"></i>Current reading</span></div>`,
-    { sub: `${st.id} · ${st.where}`, actions: `<div class="ws-seg">${ws.stations.map((x) => `<button class="${x.id === st.id ? 'is-on' : ''}" data-action="ws-station" data-id="${x.id}">${x.id}</button>`).join('')}</div>` }
+    { sub: `${st.id}, ${st.where}`, actions: `<div class="ws-seg">${ws.stations.map((x) => `<button class="${x.id === st.id ? 'is-on' : ''}" data-action="ws-station" data-id="${x.id}">${x.id}</button>`).join('')}</div>` }
   );
 }
 
@@ -204,7 +202,7 @@ function stationsGrid(ws) {
   return `<div class="ws-grid">${ws.stations
     .map(
       (st) => `<section class="ws-st ${st.id === selStation ? 'is-sel' : ''}">
-      <div class="ws-st-h"><span class="ws-st-ic">${ico('sensor', 20)}</span><div><strong>${esc(st.name)}</strong><span>${esc(st.id)} · ${esc(st.where)}</span></div><span class="ws-st-v">${dot(st.sev)}${st.sev === 'normal' ? 'Within limits' : st.sev === 'critical' ? 'Outside limits' : 'Check'}</span></div>
+      <div class="ws-st-h"><span class="ws-st-ic">${ico('sensor', 20)}</span><div><strong>${esc(st.name)}</strong><span>${esc(st.id)}, ${esc(st.where)}</span></div><span class="ws-st-v ws-st-v--${SEV[st.sev]?.cls || 'off'}">${st.sev === 'normal' ? 'Within limits' : st.sev === 'critical' ? 'Outside limits' : 'Check'}</span></div>
       <ul class="ws-rows">${st.params
         .map((p) => `<li class="${p.sev !== 'normal' ? 'is-bad' : ''}"><span class="ws-r-ic">${ico(p.key, 16)}</span><span class="ws-r-l">${esc(p.short || p.label)}</span>${rangeBar(p)}<strong>${val(p)}</strong></li>`)
         .join('')}</ul>
@@ -240,7 +238,7 @@ function trendCard(ws) {
     'Trends',
     `<div class="ws-tabs" role="tablist">${S.WQ_PARAMS.map((x) => `<button role="tab" aria-selected="${x.key === trendKey}" class="${x.key === trendKey ? 'is-on' : ''}" data-action="ws-trend" data-k="${x.key}">${ico(x.key, 14)}${esc(x.short || x.label)}</button>`).join('')}</div>
     ${chart}`,
-    { sub: 'Last 12 simulated hours · all three sensors', actions: src('SIMULATED IoT') }
+    { sub: 'Last 12 simulated hours at all three sensors', actions: src('SIMULATED IoT') }
   );
 }
 

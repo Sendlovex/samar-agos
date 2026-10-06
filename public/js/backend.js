@@ -59,6 +59,8 @@ const AUTH_ERRORS = {
   'auth/popup-blocked': 'The Google sign-in window was blocked. Allow pop-ups for this site and try again.',
   'auth/account-exists-with-different-credential': 'This email already uses password sign-in. Sign in with your email and password.',
   'auth/unauthorized-domain': 'This site’s domain is not authorized for Google sign-in in Firebase.',
+  'auth/requires-recent-login': 'For security, sign out and sign in again, then retry.',
+  'auth/missing-password': 'Enter your current password.',
   'auth/configuration-not-found': 'Firebase Authentication is not set up for this project yet (enable Email/Password in the console).',
 };
 export const authMessage = (e) => AUTH_ERRORS[e?.code] || e?.message || 'Something went wrong.';
@@ -85,6 +87,26 @@ export async function saveProfile(data) {
   return profile;
 }
 
+// ---------------------------------------------------------------- sign-in settings
+// Email and password changes need the current password (Firebase requires a recent sign-in).
+export const usesPassword = () => !!auth?.currentUser?.providerData.some((p) => p.providerId === 'password');
+async function reauth(password) {
+  const u = auth.currentUser;
+  await F.reauthenticateWithCredential(u, F.EmailAuthProvider.credential(u.email, password));
+}
+// Sends a confirmation link to the new address; the email changes once the link is opened.
+// Staff keep console access: the new address is added to the staff list first.
+export async function changeEmail(newEmail, password) {
+  const next = newEmail.trim().toLowerCase();
+  await reauth(password);
+  if (session.isProvider) await F.updateDoc(F.doc(db, 'config', 'access'), { providerEmails: F.arrayUnion(next), updatedAt: Date.now() });
+  await F.verifyBeforeUpdateEmail(auth.currentUser, next);
+}
+export async function changePassword(current, next) {
+  await reauth(current);
+  await F.updatePassword(auth.currentUser, next);
+}
+
 // First user of a fresh project becomes staff administrator.
 export async function claimProviderAccess() {
   await F.setDoc(F.doc(db, 'config', 'access'), { providerEmails: [session.email], createdBy: session.uid, createdAt: Date.now() });
@@ -100,6 +122,23 @@ export async function setProviderEmails(list) {
   const clean = [...new Set(list.map((e) => e.trim().toLowerCase()).filter(Boolean))];
   await F.updateDoc(F.doc(db, 'config', 'access'), { providerEmails: clean, updatedAt: Date.now() });
   return clean;
+}
+
+// ---------------------------------------------------------------- households & meter readings (staff)
+// Households are resident accounts registered in a barangay (staff accounts excluded).
+export async function listHouseholds(barangay) {
+  const [snap, staff] = await Promise.all([F.getDocs(F.query(F.collection(db, 'users'), F.where('barangay', '==', barangay))), getProviderEmails()]);
+  return snap.docs.map((d) => ({ uid: d.id, ...d.data() })).filter((u) => !staff.includes((u.email || '').toLowerCase()));
+}
+// One reading per household per month (doc id uid_YYYY-MM), so re-recording a month replaces it.
+export async function listReadings(barangay) {
+  const snap = await F.getDocs(F.query(F.collection(db, 'meterReadings'), F.where('barangay', '==', barangay)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+export async function saveReading({ uid, barangay, month, m3 }) {
+  const doc = { uid, barangay, month, m3, recordedAt: Date.now(), recordedBy: session.email };
+  await F.setDoc(F.doc(db, 'meterReadings', `${uid}_${month}`), doc);
+  return { id: `${uid}_${month}`, ...doc };
 }
 
 export async function setNotifState(id, state) {
