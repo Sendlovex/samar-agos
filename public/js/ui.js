@@ -162,6 +162,7 @@ const SOURCE = {
   'SIMULATED IoT': 'sim',
   'RESIDENT REPORTED': 'res',
   MEASURED: 'live',
+  'CLIMATE RECORD': 'live',
   INCIDENTS: 'tag',
   FIELD: 'tag',
 };
@@ -174,6 +175,7 @@ const SOURCE_TIP = {
   'SIMULATED IoT': 'Simulated IoT device for this prototype — not real sensor data',
   'RESIDENT REPORTED': 'Information submitted by residents',
   MEASURED: 'Actual meter reading',
+  'CLIMATE RECORD': 'Real historical weather record (ERA5 reanalysis via Open-Meteo)',
 };
 export const src = (kind) => `<span class="src src--${SOURCE[kind] || 'est'}" title="${SOURCE_TIP[kind] || ''}">${esc(kind)}</span>`;
 

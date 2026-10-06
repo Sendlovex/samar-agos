@@ -110,19 +110,19 @@ function homeStatus() {
   const fromProvider = svc.advisory && !svc.restored;
   const step = fixStep(svc);
   let when = '';
-  if (fromProvider && svc.etr) when = `<div class="ws-when">${icon('clock', 18)}<div><span>Water expected back by</span><strong>${fmtTime(svc.etr)}</strong><em>This is an estimate and may change.</em></div></div>`;
-  else if (fromProvider && svc.nextUpdate) when = `<div class="ws-when">${icon('clock', 18)}<div><span>Next update by</span><strong>${fmtTime(svc.nextUpdate)}</strong><em>We don't know yet when water will be back.</em></div></div>`;
-  return `<section class="ws ws--${cls}" aria-labelledby="ws-title">
-    <div class="ws-main">
-      <div class="ws-txt">
-        <h2 id="ws-title" class="ws-h"><span class="sys-dot sys-dot--${cls}" aria-hidden="true"></span>${esc(headline)}</h2>
-        <p class="ws-p">${esc(fromProvider ? svc.message : fallback || svc.message)}</p>
-        ${fromProvider ? `<p class="ws-by">${icon('megaphone', 14)} Message from ${esc(UTILITY.name)}</p>` : ''}
+  if (fromProvider && svc.etr) when = `<div class="rsvc-when">${icon('clock', 18)}<div><span>Water expected back by</span><strong>${fmtTime(svc.etr)}</strong><em>This is an estimate and may change.</em></div></div>`;
+  else if (fromProvider && svc.nextUpdate) when = `<div class="rsvc-when">${icon('clock', 18)}<div><span>Next update by</span><strong>${fmtTime(svc.nextUpdate)}</strong><em>We don't know yet when water will be back.</em></div></div>`;
+  return `<section class="rsvc rsvc--${cls}" aria-labelledby="rsvc-title">
+    <div class="rsvc-main">
+      <div class="rsvc-txt">
+        <h2 id="rsvc-title" class="rsvc-h"><span class="sys-dot sys-dot--${cls}" aria-hidden="true"></span>${esc(headline)}</h2>
+        <p class="rsvc-p">${esc(fromProvider ? svc.message : fallback || svc.message)}</p>
+        ${fromProvider ? `<p class="rsvc-by">${icon('megaphone', 14)} Message from ${esc(UTILITY.name)}</p>` : ''}
       </div>
     </div>
     ${when}
-    ${step >= 0 ? `<ol class="ws-steps" aria-label="Repair progress: ${esc(FIX_STEPS[step])}">${FIX_STEPS.map((t, i) => `<li class="${i < step ? 'is-done' : i === step ? 'is-now' : ''}"><span class="ws-dot">${i < step || (i === step && step === 3) ? icon('check', 12) : ''}</span><span>${t}</span></li>`).join('')}</ol>` : ''}
-    <div class="ws-upd">${icon('refresh', 13)} Checked ${updatedAgo(svc.updatedAt)}</div>
+    ${step >= 0 ? `<ol class="rsvc-steps" aria-label="Repair progress: ${esc(FIX_STEPS[step])}">${FIX_STEPS.map((t, i) => `<li class="${i < step ? 'is-done' : i === step ? 'is-now' : ''}"><span class="rsvc-dot">${i < step || (i === step && step === 3) ? icon('check', 12) : ''}</span><span>${t}</span></li>`).join('')}</ol>` : ''}
+    <div class="rsvc-upd">${icon('refresh', 13)} Checked ${updatedAgo(svc.updatedAt)}</div>
   </section>`;
 }
 

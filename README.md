@@ -22,6 +22,39 @@ The pipe network in `public/data/network.json` follows real Catbalogan roads fro
 node scripts/build-network.mjs public/data/network.json
 ```
 
+## Weather and climate (real data)
+
+The Forecast page uses real data from [Open-Meteo](https://open-meteo.com) (free, no API key):
+
+- **Weather forecast:** current conditions and the 3-day outlook for Catbalogan City.
+- **Climate record:** ERA5 reanalysis for 2015–2024 gives the normal daily high and rainfall for each day of the year. The last 30 days of observed rain are compared with that normal.
+
+How weather affects the water supply (demand +2.5% per °C above the climate normal, lower treatment output in heavy rain, lower river inflow in a dry spell) is still an ESTIMATED model.
+
+## Water Safety (potability)
+
+**Monitor → Water Safety** checks drinking water before it reaches residents, at three monitoring points: treatment plant outlet, Central Reservoir outlet and distribution entry.
+
+- **Online readings (SIMULATED IoT):** pH, turbidity, free residual chlorine, temperature and total dissolved solids.
+- **Lab results (MANUAL):** E. coli and total coliform.
+
+Limits follow the Philippine National Standards for Drinking Water (PNSDW 2017). Temperature uses an operational guide of ≤ 32 °C, since it has no health limit.
+
+- **Verdict:** any health limit exceeded makes the water **Not safe to drink**. The operator gets an alert, recommended actions and a one-click boil-water advisory.
+- **Demo control:** the floating panel's **Safe / Not safe** buttons switch all readings instantly. With Firebase, the choice is shared with every operator through `system/control`.
+
+## Forecast accuracy tracking
+
+Every 30 simulated minutes the app saves its storage and demand forecast for 1, 6 and 24 hours ahead. When each target time arrives, it records the measured value and scores the error. The Forecast page shows:
+
+- average error (percentage points of storage)
+- bias
+- the share of forecasts within target
+- demand error (MAPE)
+- a forecast-vs-measured chart
+
+The 90th-percentile error becomes the shaded "likely range" around the storage forecast. Proposed targets (±2 / ±5 / ±8 pts) are in `FC_TARGETS` in `store.js`; agree the real margins with the utility. Measured values are simulated in this prototype, so the scores become a real accuracy measure only once meter data is connected.
+
 ## Backend: Firebase (Authentication + Cloud Firestore)
 
 SAMAR-AGOS uses Firebase project **`samar-agos-ic9sb`**. The web config is in `public/js/firebase-config.js`. It identifies the project but isn't secret; access is enforced by the security rules.
@@ -71,7 +104,7 @@ public/js/
   map.js                     map entry point + offline schematic SVG fallback
   views/resident.js          resident portal (mobile-first)
   views/provider*.js         provider portal (overview, operations, incidents, work orders,
-                             forecast, simulator, advisories, assets, maintenance, analytics)
+                             forecast, simulator, advisories, assets, analytics; maintenance is a Work Orders tab)
 ```
 
 ## Data transparency
