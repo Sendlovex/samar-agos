@@ -1,7 +1,7 @@
 // Provider: Incident & report inbox, incident detail, work orders.
 import * as S from '../store.js';
 import { ZONES, zoneById, CRITICAL_FACILITIES, reportTypeLabel, REPORT_TYPES, WO_STEPS, TEAMS } from '../data.js';
-import { icon, status, src, card, kpi, timeline, activityLog, empty, tabs, table, field, openModal, closeOverlay, register, registerInputs, formData, confirmDialog, updatedAgo, priorityBadge, sevBadge, alertBanner, SEV, pill } from '../ui.js';
+import { icon, status, src, card, kpi, timeline, activityLog, empty, tabs, table, field, openModal, closeOverlay, register, registerInputs, formData, confirmDialog, updatedAgo, priorityBadge, sevBadge, alertBanner, SEV, pill, busy } from '../ui.js';
 import { lineChart, sparkline } from '../charts.js';
 import { renderMap } from '../map.js';
 import { esc, fmt, fmtTime, fmtTime24, fmtDate, fmtDateTime, relTime, toLocalInput, fromLocalInput, readImage } from '../util.js';
@@ -201,15 +201,15 @@ register({
       { footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="inc-create" data-zone="${c.zone}">${icon('alert', 15)} Create incident</button>` }
     );
   },
-  'inc-create': (el) => {
+  'inc-create': (el) => busy(el, async () => {
     const d = formData(document.getElementById('inc-form'));
     const ops = (d.evidence || []).filter((x) => x !== 'Resident reports');
     if (!ops.length) return S.toast('Confirm at least one operational evidence item (pressure, flow, storage, or equipment).', 'error');
     const c = S.reportClusters().find((x) => x.zone === el.dataset.zone);
-    const inc = S.createIncident({ zone: c.zone, reportIds: c.reports.map((r) => r.id), title: d.title, type: d.type, severity: d.severity, note: d.note, evidence: d.evidence });
+    const inc = await S.createIncident({ zone: c.zone, reportIds: c.reports.map((r) => r.id), title: d.title, type: d.type, severity: d.severity, note: d.note, evidence: d.evidence });
     closeOverlay();
     go(`#/p/incidents/${inc.id}`);
-  },
+  }),
 });
 
 // ---------------------------------------------------------------- INCIDENT DETAIL

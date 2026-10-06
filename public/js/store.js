@@ -1,6 +1,6 @@
 // SAMAR-AGOS state store + simulated IoT engine + forecasting + workflow actions.
 // Everything the UI shows is derived from this single connected state.
-import { makeSeed, makeReport, ZONES, zoneById, RESIDENT, REPORT_STEPS, WO_STEPS, SCENARIOS, reportTypeLabel, CRITICAL_FACILITIES } from './data.js';
+import { makeSeed, makeReport, ZONES, zoneById, RESIDENT, PROVIDER_USER, REPORT_STEPS, WO_STEPS, SCENARIOS, reportTypeLabel, CRITICAL_FACILITIES } from './data.js';
 import { clamp, rng, parsePoly, pointInPolygon, fmtTime, hoursLabel } from './util.js';
 
 const KEY = 'samaragos.state.v5';
@@ -53,12 +53,22 @@ export function load() {
   reset(false);
 }
 
-export function reset(notify = true) {
-  state = makeSeed();
-  state.factors = { demandMult: 1, inflowMult: 1 };
-  state.emergency = { active: false, poolML: 0 };
-  state.activeScenarios = [];
+function freshState() {
+  const s = makeSeed();
+  s.factors = { demandMult: 1, inflowMult: 1 };
+  s.emergency = { active: false, poolML: 0 };
+  s.activeScenarios = [];
+  return s;
+}
+
+export async function reset(notify = true) {
+  state = freshState();
   warmup();
+  if (remote) {
+    clearShared();
+    if (notify) toast('Resetting shared demo data…', 'info');
+    await remote.reset();
+  }
   clearTimeout(saveTimer);
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -73,8 +83,108 @@ export function reset(notify = true) {
 
 export function commit(msg, kind) {
   save();
+  remote?.flush();
   emit('change');
   if (msg) toast(msg, kind);
+}
+
+// ---------------------------------------------------------------- remote (Firebase) bridge
+// When a backend is attached, shared collections come from Firestore listeners and
+// commit() writes changed documents back. Without it the app runs on local demo data.
+let remote = null;
+export function setRemote(r) {
+  remote = r;
+}
+export const isRemote = () => !!remote;
+const session = () => remote?.getSession() || null;
+const SHARED = ['reports', 'incidents', 'workOrders', 'advisories', 'notifications', 'altWater', 'emergencyTanks', 'assets'];
+const SORT = {
+  reports: (a, b) => a.submittedAt - b.submittedAt,
+  incidents: (a, b) => b.detectedAt - a.detectedAt,
+  workOrders: (a, b) => b.createdAt - a.createdAt,
+  advisories: (a, b) => b.startAt - a.startAt,
+  notifications: (a, b) => b.at - a.at,
+  altWater: (a, b) => a.id.localeCompare(b.id),
+  emergencyTanks: (a, b) => a.id.localeCompare(b.id),
+  assets: (a, b) => 0,
+};
+let notifParts = {};
+let emitQueued = false;
+function emitSoon() {
+  if (emitQueued) return;
+  emitQueued = true;
+  queueMicrotask(() => ((emitQueued = false), emit('change')));
+}
+
+export function clearShared() {
+  SHARED.forEach((c) => (state[c] = []));
+  notifParts = {};
+  state.publicStats = null;
+}
+
+// Seed data shaped for Firestore: simulated reports belong to placeholder residents.
+export function buildSeedState() {
+  const s = freshState();
+  s.reports.forEach((r) => {
+    r.reporterUid = r.mine ? 'seed-resident' : 'seed-sim';
+    delete r.mine;
+  });
+  s.notifications.forEach((n) => ((n.uid = n.audience === 'resident' ? 'seed-resident' : null), (n.zone = null)));
+  return s;
+}
+
+export function applyRemote(coll, docs, part) {
+  const me = session();
+  if (coll === 'reports') docs.forEach((r) => (r.mine = !!me && r.reporterUid === me.uid));
+  if (coll === 'notifications') {
+    const ns = me?.profile?.notifState || {};
+    notifParts[part || 'all'] = docs
+      .filter((n) => part !== 'broadcast' || !n.zone || n.zone === RESIDENT.zone)
+      .map((n) => (part === 'broadcast' && ns[n.id] ? { ...n, state: ns[n.id] } : n));
+    const local = state.notifications.filter((n) => n.local);
+    state.notifications = [...Object.values(notifParts).flat(), ...local].sort(SORT.notifications);
+  } else {
+    state[coll] = docs.sort(SORT[coll]);
+  }
+  if (coll === 'reports' && me?.isProvider) processResidentResponses();
+  emitSoon();
+}
+
+export function applyControl(d) {
+  if (!d) return;
+  const s = state;
+  s.scenario = d.scenario || 'normal';
+  s.activeScenarios = d.activeScenarios || [];
+  s.factors = d.factors || { demandMult: 1, inflowMult: 1 };
+  s.zoneIssues = d.zoneIssues || {};
+  s.pumpsOffline = d.pumpsOffline || [];
+  s.scenarioLog = d.scenarioLog || [];
+  if (d.emergencyActive && !s.emergency.active) s.emergency = { active: true, poolML: 0.4 };
+  if (!d.emergencyActive) s.emergency = { active: false, poolML: 0 };
+  if (d.volOverride && d.volOverride.at > (s.volOverride?.at || 0)) s.tele.volML = d.volOverride.volML;
+  s.volOverride = d.volOverride || null;
+  updateDerived(s.tele, s.tele.simTime);
+  emitSoon();
+}
+
+export function applyPublic(d) {
+  state.publicStats = d;
+  emitSoon();
+}
+
+// Resident feedback is recorded on the report; staff devices apply it to the incident.
+function processResidentResponses() {
+  let changed = false;
+  state.reports.forEach((r) => {
+    const resp = r.residentResponse;
+    if (!resp || resp.processed || !r.incidentId) return;
+    const inc = state.incidents.find((i) => i.id === r.incidentId);
+    if (!inc) return;
+    applyResponseToIncident(r, inc);
+    resp.processed = true;
+    changed = true;
+  });
+  if (changed) commit();
 }
 
 // ---------------------------------------------------------------- physics model
@@ -238,8 +348,9 @@ export function tick() {
   });
 
   // resident reports keep arriving while an unresolved zone issue persists
+  // (local demo only — with a shared backend, scenarios add a one-off batch instead)
   Object.entries(s.zoneIssues).forEach(([zone, issue]) => {
-    if (!issue.spawn) return;
+    if (!issue.spawn || remote) return;
     const count = s.reports.filter((rp) => rp.zone === zone && rp.submittedAt >= issue.since).length;
     const informed = s.advisories.some((a) => a.status === 'Active' && a.areas.includes(zone));
     const chance = informed ? 0.03 : 0.1;
@@ -251,7 +362,7 @@ export function tick() {
   emit('tick');
 }
 
-function spawnReport(zone, issueType) {
+function spawnReport(zone, issueType, id = `WR-2026-${state.reportSeq++}`) {
   const z = zoneById(zone);
   const p = parsePoly(z.poly);
   const xs = p.map((q) => q[0]);
@@ -263,7 +374,8 @@ function spawnReport(zone, issueType) {
   } while (!pointInPolygon([x, y], p) && guard++ < 200);
   const pool = issueType === 'leak' ? ['leak', 'low_pressure', 'low_pressure', 'no_water', 'leak'] : ['low_pressure', 'low_pressure', 'low_pressure', 'no_water', 'leak'];
   const type = pool[Math.floor(rand() * pool.length)];
-  const rep = makeReport(rand, { id: `WR-2026-${state.reportSeq++}`, zone, type, x, y, at: Date.now() });
+  const rep = makeReport(rand, { id, zone, type, x, y, at: Date.now() });
+  if (remote) rep.reporterUid = 'seed-sim';
   state.reports.push(rep);
 }
 
@@ -379,7 +491,8 @@ function syncAlertNotifications() {
     if (al.key.startsWith('overdue') || al.key.startsWith('offline') || al.key === 'turbidity-E') return; // seeded already
     const prev = state.seenAlerts[al.key];
     if (!prev || (al.sev === 'critical' && prev !== 'critical')) {
-      notify('provider', { kind: al.cat, title: al.title, body: al.detail, link: al.link, severity: al.sev });
+      // derived from this device's telemetry, so kept local (never written to the shared database)
+      notify('provider', { kind: al.cat, title: al.title, body: al.detail, link: al.link, severity: al.sev, local: true });
     }
     state.seenAlerts[al.key] = al.sev;
   });
@@ -419,17 +532,29 @@ export function overallStatus(s = state) {
 
 // ---------------------------------------------------------------- notifications
 let nseq = 100;
+// uid targets one resident; zone targets residents of a zone; neither = everyone in the audience.
 export function notify(audience, n) {
-  state.notifications.unshift({ id: `n${Date.now()}${nseq++}`, audience, state: 'unread', at: Date.now(), ...n });
-  if (state.notifications.length > 120) state.notifications.length = 120;
+  const id = `n${Date.now().toString(36)}${(nseq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  state.notifications.unshift({ id, audience, state: 'unread', at: Date.now(), uid: null, zone: null, ...n });
+  if (state.notifications.length > 150) state.notifications.length = 150;
+}
+// Resident-facing notice about zones: one per zone on the shared backend, or for the demo resident locally.
+function notifyZones(zones, n) {
+  if (remote) zones.forEach((zone) => notify('resident', { ...n, zone }));
+  else if (!zones.length || zones.includes(RESIDENT.zone)) notify('resident', n);
+}
+// Shared broadcast notices keep read/archived state per user (on the user profile).
+function setOne(n, st) {
+  n.state = st;
+  if (remote && n.audience === 'resident' && !n.uid && !n.local) remote.setNotifState(n.id, st);
 }
 export function setNotification(id, st) {
   const n = state.notifications.find((x) => x.id === id);
-  if (n) n.state = st;
+  if (n) setOne(n, st);
   commit();
 }
 export function markAllRead(audience) {
-  state.notifications.filter((n) => n.audience === audience && n.state === 'unread').forEach((n) => (n.state = 'read'));
+  state.notifications.filter((n) => n.audience === audience && n.state === 'unread').forEach((n) => setOne(n, 'read'));
   commit();
 }
 
@@ -445,8 +570,11 @@ export function residentService(s = state, zone = RESIDENT.zone) {
   }
   if (recent) return { sev: 'normal', label: 'SERVICE RESTORED', message: recent.message, updatedAt: recent.updatedAt, advisory: recent, restored: true };
   if (inc) return { sev: 'info', label: 'UNDER INVESTIGATION', message: 'The water provider is investigating reported service problems in your area. An advisory will be posted when more is confirmed.', updatedAt: inc.timeline[inc.timeline.length - 1].at, incident: inc };
-  const pending = s.reports.filter((r) => r.zone === zone && r.status === 'submitted').length;
-  if (pending >= 3) return { sev: 'info', label: 'REPORTS UNDER REVIEW', message: `Residents in your area have reported water problems (${pending} reports). The provider is reviewing these reports against system readings. No advisory has been issued yet.`, updatedAt: Math.max(...s.reports.filter((r) => r.zone === zone).map((r) => r.submittedAt)), myReports };
+  // residents can't read other residents' reports on the shared backend; staff publish zone counts instead
+  const shared = remote && !session()?.isProvider;
+  const pending = shared ? s.publicStats?.pending?.[zone] || 0 : s.reports.filter((r) => r.zone === zone && r.status === 'submitted').length;
+  const latestAt = shared ? s.publicStats?.latest?.[zone] || Date.now() : Math.max(...s.reports.filter((r) => r.zone === zone).map((r) => r.submittedAt));
+  if (pending >= 3) return { sev: 'info', label: 'REPORTS UNDER REVIEW', message: `Residents in your area have reported water problems (${pending} reports). The provider is reviewing these reports against system readings. No advisory has been issued yet.`, updatedAt: latestAt, myReports };
   return { sev: 'normal', label: 'NORMAL SERVICE', message: 'No service problems are currently reported by your water provider for your area.', updatedAt: s.tele.lastUpdate };
 }
 
@@ -459,15 +587,22 @@ function advanceReports(ids, status, text) {
     if (!r || stepIdx(r.status) >= stepIdx(status)) return;
     r.status = status;
     r.updates.push({ at: Date.now(), status, text });
-    if (r.mine) {
+    const realResident = r.reporterUid && !r.reporterUid.startsWith('seed');
+    if (r.mine || realResident) {
       const label = REPORT_STEPS[stepIdx(status)].label;
-      notify('resident', { kind: 'report', title: `${label} — ${r.id}`, body: text, link: `#/r/reports/${r.id}` });
+      notify('resident', { kind: 'report', title: `${label} — ${r.id}`, body: text, link: `#/r/reports/${r.id}`, uid: r.reporterUid || null });
     }
   });
 }
 
-export function submitReport(data) {
-  const id = `WR-2026-${state.reportSeq++}`;
+// Ticket numbers come from the shared counter when a backend is attached.
+async function nextId(kind, local) {
+  return remote ? (await remote.allocIds(kind))[0] : local();
+}
+
+export async function submitReport(data) {
+  const id = await nextId('report', () => `WR-2026-${state.reportSeq++}`);
+  const me = session();
   const r = {
     id,
     type: data.type,
@@ -482,13 +617,15 @@ export function submitReport(data) {
     status: 'submitted',
     incidentId: null,
     mine: true,
+    reporterUid: me?.uid || null,
+    reporterName: me ? RESIDENT.name : null,
     photo: data.photo || null,
     updates: [{ at: Date.now(), status: 'submitted', text: 'Report received. Awaiting provider review.' }],
     residentResponse: null,
   };
   state.reports.push(r);
-  notify('resident', { kind: 'report', title: 'Report submitted', body: `${id} (${reportTypeLabel(r.type)}) is awaiting provider review.`, link: `#/r/reports/${id}` });
-  // link to an existing open incident in that zone as evidence (operator still reviews)
+  notify('resident', { kind: 'report', title: 'Report submitted', body: `${id} (${reportTypeLabel(r.type)}) is awaiting provider review.`, link: `#/r/reports/${id}`, uid: me?.uid || null });
+  if (me) notify('provider', { kind: 'Reports', title: `New resident report — ${zoneById(r.zone).short}`, body: `${id}: ${reportTypeLabel(r.type)}, ${r.location}`, link: '#/p/incidents', severity: 'info' });
   commit();
   return r;
 }
@@ -501,29 +638,40 @@ export function acknowledgeReports(ids) {
 export function residentVerify(reportId, restored, comment = '') {
   const r = state.reports.find((x) => x.id === reportId);
   if (!r) return;
-  r.residentResponse = { restored, comment, at: Date.now() };
-  const inc = state.incidents.find((i) => i.id === r.incidentId);
-  if (restored) {
-    advanceReports([r.id], 'verified', 'You confirmed that water service has been restored. Thank you.');
-    inc && inc.timeline.push({ at: Date.now(), text: `Resident confirmed service restored (${r.id})` });
-  } else {
+  r.residentResponse = { restored, comment, at: Date.now(), processed: false };
+  if (restored) advanceReports([r.id], 'verified', 'You confirmed that water service has been restored. Thank you.');
+  else {
     r.updates.push({ at: Date.now(), status: r.status, text: 'You reported that the problem still exists. The provider has been notified for follow-up.' });
-    if (inc) {
-      inc.timeline.push({ at: Date.now(), text: `Resident reports problem still exists (${r.id}) — follow-up required` });
-      if (inc.status === 'Resolved') {
-        inc.status = 'Investigating';
-        inc.resolvedAt = null;
-        inc.timeline.push({ at: Date.now(), text: 'Incident reopened for follow-up based on resident feedback' });
-      }
-    }
-    notify('provider', { kind: 'Reports', title: 'Resident reports problem persists', body: `${r.id} — ${reportTypeLabel(r.type)}, ${r.location}. ${comment}`, link: inc ? `#/p/incidents/${inc.id}` : '#/p/incidents', severity: 'warning' });
+    notify('provider', { kind: 'Reports', title: 'Resident reports problem persists', body: `${r.id} — ${reportTypeLabel(r.type)}, ${r.location}. ${comment}`, link: r.incidentId ? `#/p/incidents/${r.incidentId}` : '#/p/incidents', severity: 'warning' });
+  }
+  // Locally (or for staff) apply to the incident now; residents on the shared backend
+  // can't edit incidents, so a staff device applies it when the report syncs.
+  const inc = state.incidents.find((i) => i.id === r.incidentId);
+  if (inc && (!remote || session()?.isProvider)) {
+    applyResponseToIncident(r, inc);
+    r.residentResponse.processed = true;
   }
   commit(restored ? 'Thank you — service restoration confirmed' : 'Feedback sent to your water provider', restored ? 'success' : 'info');
 }
 
+function applyResponseToIncident(r, inc) {
+  if (r.residentResponse.restored) {
+    inc.timeline.push({ at: Date.now(), text: `Resident confirmed service restored (${r.id})` });
+    return;
+  }
+  inc.timeline.push({ at: Date.now(), text: `Resident reports problem still exists (${r.id}) — follow-up required` });
+  if (inc.status === 'Resolved') {
+    inc.status = 'Investigating';
+    inc.resolvedAt = null;
+    inc.timeline.push({ at: Date.now(), text: 'Incident reopened for follow-up based on resident feedback' });
+  }
+}
+
 // ---------------------------------------------------------------- incident actions
-export function createIncident({ zone, reportIds, title, type, severity, note, evidence }) {
-  const id = `INC-2026-${String(state.incidentSeq++).padStart(3, '0')}`;
+const operatorName = () => (session() ? PROVIDER_USER.name : 'Operator');
+
+export async function createIncident({ zone, reportIds, title, type, severity, note, evidence }) {
+  const id = await nextId('incident', () => `INC-2026-${String(state.incidentSeq++).padStart(3, '0')}`);
   const z = zoneById(zone);
   const zt = state.tele.zones[zone];
   const reps = state.reports.filter((r) => reportIds.includes(r.id));
@@ -551,7 +699,7 @@ export function createIncident({ zone, reportIds, title, type, severity, note, e
     reportIds: [...reportIds],
     workOrderIds: [],
     advisoryIds: [],
-    notes: note ? [{ at: now, by: 'Operator', text: note }] : [],
+    notes: note ? [{ at: now, by: operatorName(), text: note }] : [],
     evidence: evidence || [],
     timeline,
     resolvedAt: null,
@@ -574,7 +722,7 @@ export function updateIncident(id, patch, logText) {
 
 export function addIncidentNote(id, text) {
   const inc = state.incidents.find((i) => i.id === id);
-  inc.notes.push({ at: Date.now(), by: 'Operator', text });
+  inc.notes.push({ at: Date.now(), by: operatorName(), text });
   inc.timeline.push({ at: Date.now(), text: `Operator note: ${text.slice(0, 80)}` });
   commit('Note added');
 }
@@ -615,14 +763,13 @@ export function resolveIncident(id, notes) {
     const r = state.reports.find((x) => x.id === rid);
     if (r && r.status !== 'verified') r.awaitingVerification = true;
   });
-  if (inc.zones.includes(RESIDENT.zone) || inc.reportIds.some((rid) => state.reports.find((r) => r.id === rid)?.mine))
-    notify('resident', { kind: 'restored', title: 'Water service restored', body: `${inc.title.split('—')[0].trim()} in your area has been resolved. Please confirm whether your water service has returned.`, link: '#/r/reports' });
+  notifyZones(inc.zones, { kind: 'restored', title: 'Water service restored', body: `${inc.title.split('—')[0].trim()} in your area has been resolved. If you reported a problem, please confirm whether your water service has returned.`, link: '#/r/reports' });
   commit(`${id} resolved — residents notified`);
 }
 
 // ---------------------------------------------------------------- work orders
-export function createWorkOrder(data) {
-  const id = `WO-2026-${String(state.woSeq++).padStart(4, '0')}`;
+export async function createWorkOrder(data) {
+  const id = await nextId('wo', () => `WO-2026-${String(state.woSeq++).padStart(4, '0')}`);
   const now = Date.now();
   const wo = { id, photos: { before: null, after: null }, notes: [], completion: null, createdAt: now, status: data.team ? 'Assigned' : 'New', history: [{ status: 'New', at: now }], ...data };
   if (data.team) wo.history.push({ status: 'Assigned', at: now });
@@ -683,8 +830,8 @@ export function setWorkOrderPhoto(id, which, dataUrl) {
 }
 
 // ---------------------------------------------------------------- advisories
-export function publishAdvisory(data) {
-  const id = `ADV-2026-${String(state.advSeq++).padStart(3, '0')}`;
+export async function publishAdvisory(data) {
+  const id = await nextId('adv', () => `ADV-2026-${String(state.advSeq++).padStart(3, '0')}`);
   const now = Date.now();
   const adv = { id, status: 'Active', updatedAt: now, ...data };
   state.advisories.unshift(adv);
@@ -693,8 +840,7 @@ export function publishAdvisory(data) {
     inc.advisoryIds.push(id);
     inc.timeline.push({ at: now, text: `Advisory ${id} published to ${data.areas.map((z) => `Zone ${z}`).join(', ')}` });
   }
-  if (data.areas.includes(RESIDENT.zone))
-    notify('resident', { kind: 'advisory', title: `New water advisory: ${data.title}`, body: data.message, link: '#/r/advisories' });
+  notifyZones(data.areas, { kind: 'advisory', title: `New water advisory: ${data.title}`, body: data.message, link: '#/r/advisories' });
   commit(`Advisory ${id} published to residents`);
   return adv;
 }
@@ -702,15 +848,14 @@ export function publishAdvisory(data) {
 export function updateAdvisory(id, patch) {
   const a = state.advisories.find((x) => x.id === id);
   Object.assign(a, patch, { updatedAt: Date.now() });
-  if (a.areas.includes(RESIDENT.zone)) notify('resident', { kind: 'advisory', title: `Advisory updated: ${a.title}`, body: patch.message || a.message, link: '#/r/advisories' });
+  notifyZones(a.areas, { kind: 'advisory', title: `Advisory updated: ${a.title}`, body: patch.message || a.message, link: '#/r/advisories' });
   commit('Advisory updated');
 }
 
 export function confirmAltWater(id, patch) {
   const p = state.altWater.find((x) => x.id === id);
   Object.assign(p, patch, { confirmedAt: Date.now() });
-  if (p.zone === RESIDENT.zone && patch.status === 'AVAILABLE')
-    notify('resident', { kind: 'water', title: 'Emergency water available', body: `${p.name} — ${p.hours}`, link: '#/r/water-access' });
+  if (patch.status === 'AVAILABLE') notifyZones([p.zone], { kind: 'water', title: 'Emergency water available', body: `${p.name} — ${p.hours}`, link: '#/r/water-access' });
   commit('Distribution point confirmed');
 }
 
@@ -721,9 +866,11 @@ export function updateEmergencyTank(id, patch) {
 }
 
 // ---------------------------------------------------------------- scenarios
-export function applyScenario(key) {
+export async function applyScenario(key) {
   const s = state;
   const now = Date.now();
+  // storage jumps are shared so every device's simulation starts from the same level
+  const setVolume = (v) => ((s.tele.volML = v), (s.volOverride = { volML: v, at: now }));
   if (key === 'normal') {
     s.factors = { demandMult: 1, inflowMult: 1 };
     s.zoneIssues = {};
@@ -731,11 +878,11 @@ export function applyScenario(key) {
     s.emergency = { active: false, poolML: 0 };
     s.activeScenarios = [];
     s.assets.forEach((a) => a.id.startsWith('PS') && (a.status = 'normal'));
-    if (s.tele.volML / RES_CAP_ML < 0.6) s.tele.volML = 0.66 * RES_CAP_ML;
+    if (s.tele.volML / RES_CAP_ML < 0.6) setVolume(0.66 * RES_CAP_ML);
   } else {
     if (!s.activeScenarios.includes(key)) s.activeScenarios.push(key);
     if (key === 'highDemand') s.factors.demandMult = 1.22;
-    if (key === 'lowReservoir') (s.tele.volML = 0.335 * RES_CAP_ML), (s.factors.demandMult = Math.max(s.factors.demandMult, 1.06));
+    if (key === 'lowReservoir') setVolume(0.335 * RES_CAP_ML), (s.factors.demandMult = Math.max(s.factors.demandMult, 1.06));
     if (key === 'pumpFailure') {
       if (!s.pumpsOffline.includes('PS-01')) s.pumpsOffline.push('PS-01');
       const a = s.assets.find((x) => x.id === 'PS-01');
@@ -747,7 +894,13 @@ export function applyScenario(key) {
     if (key === 'sourceDisruption') s.factors.inflowMult = 0.62;
     if (key === 'emergencySupply') {
       s.emergency = { active: true, poolML: 0.4 };
-      notify('resident', { kind: 'water', title: 'Emergency water supply activated', body: 'Backup storage is now supplementing the system. Distribution points are listed in Alternative Water Access.', link: '#/r/water-access' });
+      notifyZones(remote ? ZONES.map((z) => z.id) : [], { kind: 'water', title: 'Emergency water supply activated', body: 'Backup storage is now supplementing the system. Distribution points are listed in Alternative Water Access.', link: '#/r/water-access' });
+    }
+    // On the shared backend, a pressure problem brings one batch of simulated resident reports.
+    const issueZone = key === 'pipelineLeak' ? 'C' : key === 'lowPressure' ? 'B' : null;
+    if (remote && issueZone) {
+      const ids = await remote.allocIds('report', 8);
+      ids.forEach((id) => spawnReport(issueZone, s.zoneIssues[issueZone].type, id));
     }
   }
   s.scenario = key;

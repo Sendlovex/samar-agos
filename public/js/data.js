@@ -28,6 +28,25 @@ export const ZONES = [
   zone('E', 'South Coastal', ['Guindapunan', 'Guinsorongan', 'Bunuanan'], 1540, 44, 7.0),
 ];
 export const zoneById = (id) => ZONES.find((z) => z.id === id);
+export const zoneOfBarangay = (b) => ZONES.find((z) => z.barangays.includes(b)) || null;
+
+// Barangay centre points (OpenStreetMap) — used to place a resident's service address.
+export const BARANGAY_LL = {
+  'Barangay 1': [11.7794, 124.881],
+  'Barangay 13': [11.7783, 124.8868],
+  'San Pablo': [11.7801, 124.8826],
+  Muñoz: [11.7807, 124.8837],
+  Mercedes: [11.7824, 124.8774],
+  Maulong: [11.7926, 124.8661],
+  Payao: [11.8034, 124.8625],
+  Canlapwas: [11.7822, 124.8895],
+  'San Andres': [11.7874, 124.8972],
+  Lagundi: [11.7598, 124.9053],
+  Socorro: [11.7662, 124.8921],
+  Guindapunan: [11.7716, 124.8881],
+  Guinsorongan: [11.7582, 124.8851],
+  Bunuanan: [11.7541, 124.8886],
+};
 
 const COAST = [[11.816, 124.856], [11.805, 124.8575], [11.793, 124.862], [11.784, 124.872], [11.779, 124.8785], [11.773, 124.8805], [11.765, 124.8825], [11.758, 124.881], [11.7497, 124.884]];
 const line = (pts) => pts.map(([lat, lng]) => xy(lat, lng).join(',')).join(' ');

@@ -1,10 +1,11 @@
 // SAMAR-AGOS application shell: routing, layouts, login, notifications, demo control.
 import * as S from './store.js';
-import { RESIDENT, PROVIDER_USER, SCENARIOS, UTILITY } from './data.js';
-import { icon, logo, logoMark, cityScene, status, register, installDelegation, openDrawer, closeOverlay, showToast, confirmDialog, empty, tabs, SEV } from './ui.js';
+import * as B from './backend.js';
+import { RESIDENT, PROVIDER_USER, SCENARIOS, UTILITY, ZONES, BARANGAY_LL, zoneOfBarangay } from './data.js';
+import { icon, logo, logoMark, cityScene, status, register, installDelegation, openDrawer, openModal, closeOverlay, showToast, confirmDialog, empty, tabs, field, busy, SEV } from './ui.js';
 import { installChartHover, measureCharts } from './charts.js';
 import { syncMaps } from './livemap.js';
-import { esc, relTime, fmtDateTime } from './util.js';
+import { esc, relTime, fmtDateTime, toXY } from './util.js';
 import { residentViews } from './views/resident.js';
 import { providerViews } from './views/provider.js';
 
@@ -13,7 +14,11 @@ installDelegation();
 installChartHover();
 
 const ROLE_KEY = 'samaragos.role';
-let role = localStorage.getItem(ROLE_KEY);
+let role = B.FB_ENABLED ? null : localStorage.getItem(ROLE_KEY);
+let authMode = 'signin';
+let authError = '';
+// Residents can't open the operator console when accounts are real.
+export const canSwitchRole = () => !B.FB_ENABLED || !!B.getSession()?.isProvider;
 const app = document.getElementById('app');
 let current = null; // { view, params, key }
 let rerendering = false;
@@ -62,6 +67,11 @@ function parse() {
 
 function render() {
   const { area, page, id } = parse();
+  if (B.FB_ENABLED) {
+    if (!B.getSession()) return renderAuth();
+    if (!role) return; // still syncing
+    if (area === 'login' || !area) return go(role === 'resident' ? '#/r/home' : '#/p/overview');
+  }
   if (!role || area === 'login' || !area) return renderLogin();
   if (area === 'r' && role !== 'resident') return go(`#/p/overview`);
   if (area === 'p' && role !== 'provider') return go(`#/r/home`);
@@ -110,24 +120,10 @@ window.addEventListener('hashchange', () => {
 function renderLogin() {
   current = null;
   document.title = 'Sign in · SAMAR-AGOS';
-  app.innerHTML = `<div class="login">
-    <section class="login-brand">
-      <div>${logo({ size: 44, light: true })}</div>
-      <div class="login-promise">
-        <h1>Residents know what to expect.<br/>Water providers know where to act.</h1>
-        <p>SAMAR-AGOS connects community water concerns with operational monitoring, incident response, forecasting, and public advisories.</p>
-        <ul class="login-points">
-          <li>${icon('users', 18)}Community reports become operational evidence</li>
-          <li>${icon('forecast', 18)}Forecasting helps providers act before shortages become severe</li>
-          <li>${icon('wrench', 18)}Work orders turn decisions into field response</li>
-          <li>${icon('megaphone', 18)}Advisories keep residents informed — and residents verify recovery</li>
-        </ul>
-      </div>
-      <div class="login-foot">Connected Water Service Monitoring for Catbalogan City, Samar</div>
-    </section>
+  app.innerHTML = `<div class="login">${brandPanel()}
     <section class="login-panel">
       <div class="login-box">
-        <div class="login-mobile-logo">${logo({ size: 40 })}</div>
+        <div class="login-mobile-logo">${brandMark(54)}</div>
         <h2>Sign in to SAMAR-AGOS</h2>
         <p class="muted">Choose a demo account to continue.</p>
         <div class="role-cards">
@@ -146,6 +142,237 @@ function renderLogin() {
       </div>
     </section>
   </div>`;
+}
+
+// ---------------------------------------------------------------- Firebase accounts
+const brandMark = (size = 96) => `<div class="lb-brand">${logoMark(size)}<div><div class="lb-name">SAMAR-AGOS</div><div class="lb-tag">Smart Water Monitoring and Response</div></div></div>`;
+const partnerLogos = () => `<div class="lb-partners">
+      <img src="/img/partner-logo.png" alt="Partner logo" width="284" height="326"/>
+      <img src="/img/los-codigos-logo.png" alt="Los Codigos" width="368" height="315"/>
+    </div>`;
+const GOOGLE_G = `<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.3 5.7c4.3-3.9 7-9.7 7-17.1z"/><path fill="#FBBC05" d="M10.5 28.6A14.6 14.6 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2.1 1.4-4.9 2.3-8.6 2.3-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>`;
+const point = (ic, text) => `<li><span class="lp-ic">${icon(ic, 16)}</span>${text}</li>`;
+const brandPanel = () => `<section class="login-brand">
+      ${brandMark()}
+      <div class="login-promise">
+        <h1>Residents know what to expect.<br/>Water providers know where to act.</h1>
+        <p>SAMAR-AGOS connects community water concerns with operational monitoring, incident response, forecasting, and public advisories.</p>
+        <ul class="login-points">
+          ${point('users', 'Community reports become operational evidence')}
+          ${point('forecast', 'Forecasting helps providers act before shortages become severe')}
+          ${point('wrench', 'Work orders turn decisions into field response')}
+          ${point('megaphone', 'Advisories keep residents informed — and residents verify recovery')}
+        </ul>
+      </div>
+      ${partnerLogos()}
+    </section>`;
+
+function renderSplash(msg) {
+  current = null;
+  app.innerHTML = `<div class="splash" role="status">${logoMark(44)}<p>${esc(msg)}</p></div>`;
+}
+
+function renderAuth() {
+  current = null;
+  const signup = authMode === 'signup';
+  document.title = `${signup ? 'Create account' : 'Sign in'} · SAMAR-AGOS`;
+  app.innerHTML = `<div class="login">${brandPanel()}
+    <section class="login-panel">
+      <div class="login-box">
+        <div class="login-mobile-logo">${brandMark(54)}</div>
+        <div class="auth-head">
+          <span class="auth-pill">Water Service Monitoring</span>
+          <h2>${signup ? 'Create your account' : 'Welcome back'}</h2>
+          <p>${signup ? 'Register to check service status, get advisories, and report problems.' : 'Sign in to access service status, reports, and advisories.'}</p>
+        </div>
+        <button type="button" class="btn-google" data-action="auth-google">${GOOGLE_G}<span>Continue with Google</span></button>
+        <div class="auth-or"><span>or with email</span></div>
+        <form class="form auth-form" id="auth-form" novalidate>
+          <div class="auth-field">
+            <label for="au-email">Email address <span class="req">*</span></label>
+            <input type="email" id="au-email" autocomplete="email" required/>
+          </div>
+          <div class="auth-field">
+            <div class="auth-label-row"><label for="au-pw">Password <span class="req">*</span></label>${signup ? '' : '<button type="button" class="linkish" data-action="auth-forgot">Forgot password?</button>'}</div>
+            <div class="auth-pw"><input type="password" id="au-pw" autocomplete="${signup ? 'new-password' : 'current-password'}" minlength="6" required/><button type="button" class="auth-show" data-action="auth-showpw" data-for="au-pw" aria-pressed="false">Show</button></div>
+            ${signup ? '<div class="auth-hint">At least 6 characters.</div>' : ''}
+          </div>
+          ${signup ? `<div class="auth-field">
+            <label for="au-pw2">Confirm password <span class="req">*</span></label>
+            <div class="auth-pw"><input type="password" id="au-pw2" autocomplete="new-password" required/><button type="button" class="auth-show" data-action="auth-showpw" data-for="au-pw2" aria-pressed="false">Show</button></div>
+          </div>` : ''}
+          ${authError ? `<div class="auth-err" role="alert">${icon('alert', 15)}<span>${esc(authError)}</span></div>` : ''}
+          <button type="submit" class="auth-submit">${signup ? 'Create account' : 'Sign in'}</button>
+        </form>
+        <div class="auth-alt">
+          ${signup ? `<span>Already have an account?</span> <button class="linkish" data-action="auth-mode" data-mode="signin">Sign in</button>` : `<span>Don't have an account?</span> <button class="linkish" data-action="auth-mode" data-mode="signup">Create account</button>`}
+        </div>
+        <div class="login-mobile-partners">${partnerLogos()}</div>
+      </div>
+    </section></div>`;
+  const form = document.getElementById('auth-form');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('.auth-submit');
+    const email = document.getElementById('au-email').value;
+    const pw = document.getElementById('au-pw').value;
+    busy(btn, async () => {
+      authError = '';
+      try {
+        if (signup) {
+          if (pw !== document.getElementById('au-pw2').value) throw { message: 'Passwords do not match.' };
+          await B.signUp(email, pw);
+        } else await B.signIn(email, pw);
+      } catch (err) {
+        authError = B.authMessage(err);
+        renderAuth();
+        document.getElementById('au-email').value = email;
+      }
+    });
+  });
+  setTimeout(() => document.getElementById('au-email')?.focus(), 30);
+}
+
+const barangayOptions = (sel) =>
+  ZONES.map((z) => `<optgroup label="${esc(z.name)}">${z.barangays.map((b) => `<option ${b === sel ? 'selected' : ''}>${esc(b)}</option>`).join('')}</optgroup>`).join('');
+
+function profileFields(p = {}) {
+  return `${field('Full name', `<input id="pf-name" value="${esc(p.name || '')}" autocomplete="name" required/>`, { id: 'pf-name', req: true })}
+    <div class="grid-2">
+      ${field('Barangay', `<select id="pf-brgy">${barangayOptions(p.barangay || 'Mercedes')}</select>`, { id: 'pf-brgy', req: true })}
+      ${field('Purok / street', `<input id="pf-addr" value="${esc(p.address || '')}" placeholder="e.g. Purok 3"/>`, { id: 'pf-addr', optional: true })}
+    </div>
+    ${field('Mobile number', `<input id="pf-phone" type="tel" value="${esc(p.phone || '')}" placeholder="+63 9xx xxx xxxx" autocomplete="tel"/>`, { id: 'pf-phone', optional: true, hint: 'Used only by your water provider for service updates.' })}`;
+}
+const readProfileFields = () => ({
+  name: document.getElementById('pf-name').value.trim(),
+  barangay: document.getElementById('pf-brgy').value,
+  address: document.getElementById('pf-addr').value.trim(),
+  phone: document.getElementById('pf-phone').value.trim(),
+});
+
+function renderOnboarding() {
+  current = null;
+  const ses = B.getSession();
+  document.title = 'Set up your profile · SAMAR-AGOS';
+  app.innerHTML = `<div class="login">${brandPanel()}
+    <section class="login-panel"><div class="login-box">
+      <h2>Set up your profile</h2>
+      <p class="muted">Signed in as ${esc(ses.email)}. Your barangay tells us which service zone and advisories apply to you.</p>
+      <form class="form" id="onb-form" novalidate>
+        ${profileFields()}
+        ${!ses.accessExists ? `<label class="chk onb-admin"><input type="checkbox" id="onb-admin"/> <span><strong>I'm setting up SAMAR-AGOS for our water utility.</strong> Make this account the first staff administrator (only the first account can do this).</span></label>` : ''}
+        <div class="auth-err" role="alert" hidden></div>
+        <button type="submit" class="btn btn--primary btn--lg">Continue</button>
+      </form>
+      <div class="auth-alt"><button class="linkish" data-action="logout">Use a different account</button></div>
+    </div></section></div>`;
+  const form = document.getElementById('onb-form');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = readProfileFields();
+    const errBox = form.querySelector('.auth-err');
+    if (!data.name) return (errBox.hidden = false), (errBox.innerHTML = `${icon('alert', 15)}<span>Please enter your full name.</span>`);
+    busy(form.querySelector('button[type=submit]'), async () => {
+      await B.saveProfile(data);
+      if (document.getElementById('onb-admin')?.checked) await B.claimProviderAccess();
+      await enterApp();
+    });
+  });
+}
+
+function hashNum(str, mod) {
+  let h = 0;
+  for (const c of str) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h % mod;
+}
+
+// Map the signed-in user's profile onto the resident / staff identity used by the views.
+function applyProfile(ses) {
+  const p = ses.profile || {};
+  const name = p.name || ses.email.split('@')[0];
+  const initials = name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, 2).toUpperCase() || 'U';
+  const barangay = p.barangay || 'Mercedes';
+  const zone = zoneOfBarangay(barangay) || ZONES[1];
+  const [lat, lng] = BARANGAY_LL[barangay] || [11.7824, 124.8774];
+  const home = toXY(lat + ((hashNum(ses.uid, 9) - 4) * 0.0004), lng + ((hashNum(ses.uid + 'x', 9) - 4) * 0.0004));
+  Object.assign(RESIDENT, {
+    name,
+    initials,
+    barangay,
+    zone: zone.id,
+    address: p.address ? `${p.address}, Brgy. ${barangay}` : `Brgy. ${barangay}`,
+    x: home.x,
+    y: home.y,
+    phone: p.phone || 'Not provided',
+    account: `04${hashNum(ses.uid, 90) + 10}-${String(hashNum(ses.uid + 'a', 1000)).padStart(3, '0')}-${String(hashNum(ses.uid + 'b', 10000)).padStart(4, '0')}`,
+    meter: `MTR-${zone.id}-${String(hashNum(ses.uid + 'm', 100000)).padStart(5, '0')}`,
+    email: ses.email,
+  });
+  Object.assign(PROVIDER_USER, { name, initials, role: ses.isProvider ? 'Water utility staff' : 'Resident', email: ses.email });
+}
+
+async function enterApp() {
+  const ses = B.getSession();
+  applyProfile(ses);
+  renderSplash('Syncing with the SAMAR-AGOS database…');
+  await B.startSync();
+  const pref = localStorage.getItem(ROLE_KEY);
+  role = ses.isProvider ? (pref === 'resident' ? 'resident' : 'provider') : 'resident';
+  const { area } = parse();
+  const want = role === 'resident' ? 'r' : 'p';
+  if (area !== want) go(want === 'r' ? '#/r/home' : '#/p/overview');
+  else render();
+}
+
+async function boot() {
+  if (!B.FB_ENABLED) return render();
+  renderSplash('Connecting…');
+  try {
+    await B.initBackend();
+  } catch (e) {
+    console.error(e);
+    app.innerHTML = `<div class="splash">${logoMark(44)}<p>Could not reach the SAMAR-AGOS server. Check your internet connection and reload.</p></div>`;
+    return;
+  }
+  S.setRemote({ flush: B.flush, allocIds: B.allocIds, getSession: B.getSession, setNotifState: B.setNotifState, reset: B.resetRemote });
+  B.onAuth(async (user) => {
+    if (!user) {
+      role = null;
+      B.stopSync();
+      return renderAuth();
+    }
+    renderSplash('Loading your account…');
+    try {
+      const ses = await B.loadSession(user);
+      if (!ses.profile) return renderOnboarding();
+      await enterApp();
+    } catch (e) {
+      console.error(e);
+      app.innerHTML = `<div class="splash">${logoMark(44)}<p>Could not load your account (${esc(e.code || e.message)}).</p><button class="btn btn--outline" data-action="logout">Sign out</button></div>`;
+    }
+  });
+}
+
+function openProfileEditor() {
+  const ses = B.getSession();
+  openModal('Edit profile', `<form class="form" id="pe-form">${profileFields(ses.profile || {})}</form>`, {
+    footer: `<button class="btn btn--ghost" data-action="ov-close">Cancel</button><button class="btn btn--primary" data-action="profile-save">Save profile</button>`,
+  });
+}
+
+async function openTeamAccess() {
+  const emails = await B.getProviderEmails();
+  const me = B.getSession().email;
+  openModal(
+    'Staff access',
+    `<p class="muted">People signed in with these emails can use the provider console. Everyone else uses the resident portal.</p>
+    <ul class="team-list">${emails
+      .map((e) => `<li><span>${icon('user', 15)} ${esc(e)}${e === me ? ' <span class="muted sm">(you)</span>' : ''}</span>${e === me || emails.length < 2 ? '' : `<button class="btn btn--ghost btn--xs" data-action="team-remove" data-email="${esc(e)}">Remove</button>`}</li>`)
+      .join('')}</ul>
+    <div class="team-add"><label class="sr-only" for="team-email">Staff email</label><input id="team-email" type="email" placeholder="colleague@utility.gov.ph"/><button class="btn btn--primary btn--sm" data-action="team-add">Add staff</button></div>
+    <p class="fine">They must sign in with this exact email. Changes take effect on their next sign-in.</p>`
+  );
 }
 
 // ---------------------------------------------------------------- resident shell
@@ -169,7 +396,7 @@ function renderResidentShell(page, html) {
       ${RES_NAV.filter((n) => primary.includes(n.id)).map((n) => `<a href="#/r/${n.id}" class="${page === n.id || (n.id === 'reports' && page === 'reports') ? 'is-active' : ''} ${n.id === 'report' ? 'bn-cta' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 20)}<span>${esc(n.short)}</span></a>`).join('')}
       <button class="${isMore ? 'is-active' : ''}" data-action="res-more">${icon('menu', 20)}<span>More</span></button>
     </nav>
-    <footer class="rv-foot">SAMAR-AGOS prototype · ${esc(UTILITY.name)} (fictional) · Demo data only · <button class="linkish" data-action="switch-role">Switch to provider view</button></footer>
+    <footer class="rv-foot">SAMAR-AGOS prototype · ${esc(UTILITY.name)} (fictional) · ${B.FB_ENABLED ? 'Telemetry simulated' : 'Demo data only'}${canSwitchRole() ? ' · <button class="linkish" data-action="switch-role">Switch to provider view</button>' : ''}</footer>
   </div>`;
 }
 
@@ -190,15 +417,6 @@ function renderProviderShell(page, view, html) {
           return `<a href="#/p/${n.id}" class="sb-a ${page === n.id ? 'is-active' : ''}" ${page === n.id ? 'aria-current="page"' : ''}>${icon(n.icon, 17)}<span>${n.label}</span>${c ? `<span class="sb-n">${c}</span>` : ''}</a>`;
         }).join('')}</div>`).join('')}
       </nav>
-      <div class="sb-foot">
-        <button class="sb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>
-        <button class="sb-a" data-action="switch-role">${icon('home', 17)}<span>Resident view</span></button>
-        <div class="sb-user">
-          <span class="avatar avatar--navy">${PROVIDER_USER.initials}</span>
-          <span class="sb-user-t"><strong>${esc(PROVIDER_USER.name)}</strong><span>${esc(PROVIDER_USER.role)}</span></span>
-          <button class="icon-btn sb-out" data-action="logout" aria-label="Sign out" title="Sign out">${icon('logout', 17)}</button>
-        </div>
-      </div>
     </aside>
     <div class="sb-scrim" data-action="sb-close"></div>
     <div class="pv-main">
@@ -210,13 +428,35 @@ function renderProviderShell(page, view, html) {
           <span id="tb-status">${headerStatus()}</span>
           <button class="btn btn--sm btn--outline tb-demo" data-action="demo-panel">${icon('play', 14)}<span>Demo scenarios</span></button>
           <a href="#/p/notifications" class="icon-btn bell" aria-label="Notifications, ${unread} unread">${icon('bell', 20)}<span class="bell-n" id="bell-n" ${unread ? '' : 'hidden'}>${unread}</span></a>
-          <span class="avatar avatar--navy" title="${esc(PROVIDER_USER.name)} — ${esc(PROVIDER_USER.role)}">${PROVIDER_USER.initials}</span>
+          ${accountMenu()}
         </div>
       </header>
       <main id="view" class="pv-content scroll-root" tabindex="-1">${html}</main>
     </div>
   </div>`;
 }
+
+function accountMenu() {
+  const email = B.FB_ENABLED ? B.getSession()?.email : '';
+  return `<details class="acct">
+    <summary class="acct-btn" aria-label="Account menu for ${esc(PROVIDER_USER.name)}"><span class="avatar avatar--navy">${PROVIDER_USER.initials}</span>${icon('chev-d', 14)}</summary>
+    <div class="acct-menu">
+      <div class="acct-head"><span class="avatar avatar--navy">${PROVIDER_USER.initials}</span><span><strong>${esc(PROVIDER_USER.name)}</strong><span>${esc(email || PROVIDER_USER.role)}</span></span></div>
+      <button data-action="switch-role">${icon('home', 16)}<span>Resident view</span></button>
+      ${B.FB_ENABLED ? `<button data-action="team-open">${icon('users', 16)}<span>Staff access</span></button>` : ''}
+      <button data-action="logout" class="acct-out">${icon('logout', 16)}<span>Sign out</span></button>
+    </div>
+  </details>`;
+}
+// Close the account menu on outside clicks, item clicks and Escape.
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('details.acct[open]').forEach((d) => {
+    if (!d.contains(e.target) || e.target.closest('.acct-menu [data-action]')) d.open = false;
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.querySelectorAll('details.acct[open]').forEach((d) => (d.open = false));
+});
 
 function freshness() {
   const t = S.getState().tele;
@@ -278,12 +518,77 @@ register({
     localStorage.setItem(ROLE_KEY, role);
     go(role === 'resident' ? '#/r/home' : '#/p/overview');
   },
-  logout: () => {
+  logout: async () => {
     role = null;
     localStorage.removeItem(ROLE_KEY);
+    if (B.FB_ENABLED) {
+      closeOverlay();
+      authMode = 'signin';
+      authError = '';
+      await B.signOutUser();
+      return;
+    }
     go('#/login');
   },
+  'auth-mode': (el) => ((authMode = el.dataset.mode), (authError = ''), renderAuth()),
+  'auth-forgot': async () => {
+    const email = document.getElementById('au-email')?.value.trim();
+    if (!email) return showToast({ msg: 'Enter your email first, then choose "Forgot password?"', kind: 'info' });
+    try {
+      await B.resetPassword(email);
+      showToast({ msg: `Password reset email sent to ${email}`, kind: 'success' });
+    } catch (e) {
+      showToast({ msg: B.authMessage(e), kind: 'error' });
+    }
+  },
+  'auth-google': (el) =>
+    busy(el, async () => {
+      try {
+        authError = '';
+        await B.signInGoogle();
+      } catch (e) {
+        authError = B.authMessage(e);
+        renderAuth();
+      }
+    }),
+  'auth-showpw': (el) => {
+    const input = document.getElementById(el.dataset.for);
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    el.textContent = show ? 'Hide' : 'Show';
+    el.setAttribute('aria-pressed', String(show));
+  },
+  'profile-edit': () => openProfileEditor(),
+  'profile-save': (el) =>
+    busy(el, async () => {
+      const data = readProfileFields();
+      if (!data.name) return showToast({ msg: 'Please enter your full name.', kind: 'error' });
+      await B.saveProfile(data);
+      applyProfile(B.getSession());
+      closeOverlay();
+      showToast({ msg: 'Profile updated', kind: 'success' });
+      await B.startSync(); // zone may have changed → refresh zone notifications
+      render();
+    }),
+  'team-open': () => openTeamAccess().catch((e) => showToast({ msg: `Could not load staff list (${e.code || e.message})`, kind: 'error' })),
+  'team-add': (el, e) =>
+    busy(el, async () => {
+      e?.preventDefault?.();
+      const email = document.getElementById('team-email').value.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showToast({ msg: 'Enter a valid email address', kind: 'error' });
+      await B.setProviderEmails([...(await B.getProviderEmails()), email]);
+      showToast({ msg: `${email} can now use the provider console`, kind: 'success' });
+      await openTeamAccess();
+    }),
+  'team-remove': (el) =>
+    busy(el, async () => {
+      const email = el.dataset.email;
+      await B.setProviderEmails((await B.getProviderEmails()).filter((x) => x !== email));
+      showToast({ msg: `${email} removed from staff access`, kind: 'info' });
+      await openTeamAccess();
+    }),
   'switch-role': () => {
+    if (!canSwitchRole()) return;
     role = role === 'resident' ? 'provider' : 'resident';
     localStorage.setItem(ROLE_KEY, role);
     go(role === 'resident' ? '#/r/home' : '#/p/overview');
@@ -296,18 +601,30 @@ register({
       'More',
       `<nav class="more-list">${RES_NAV.filter((n) => !['home', 'advisories', 'report', 'reports'].includes(n.id))
         .map((n) => `<a href="#/r/${n.id}">${icon(n.icon, 20)}<span>${n.label}</span>${icon('chev-r', 18)}</a>`)
-        .join('')}<button data-action="switch-role">${icon('activity', 20)}<span>Switch to provider view (demo)</span>${icon('chev-r', 18)}</button><button data-action="logout">${icon('logout', 20)}<span>Sign out</span>${icon('chev-r', 18)}</button></nav>`
+        .join('')}${canSwitchRole() ? `<button data-action="switch-role">${icon('activity', 20)}<span>Switch to provider view</span>${icon('chev-r', 18)}</button>` : ''}<button data-action="logout">${icon('logout', 20)}<span>Sign out</span>${icon('chev-r', 18)}</button></nav>`
     );
   },
   'demo-panel': () => openDemoPanel(),
-  'apply-scenario': (el) => {
-    S.applyScenario(el.dataset.id);
-    openDemoPanel();
-  },
+  'apply-scenario': (el) =>
+    busy(el, async () => {
+      await S.applyScenario(el.dataset.id);
+      openDemoPanel();
+    }),
   'reset-demo': async () => {
-    const ok = await confirmDialog({ title: 'Reset demo data?', body: 'All incidents, work orders, advisories, and reports created during this demo will be cleared and the starting scenario restored.', confirm: 'Reset demo', danger: true });
+    const ok = await confirmDialog({
+      title: 'Reset demo data?',
+      body: B.FB_ENABLED
+        ? 'This deletes all reports, incidents, work orders, advisories and notifications in the shared database — for every user — and restores the starting scenario. User accounts and staff access are kept.'
+        : 'All incidents, work orders, advisories, and reports created during this demo will be cleared and the starting scenario restored.',
+      confirm: 'Reset demo',
+      danger: true,
+    });
     if (ok) {
-      S.reset();
+      try {
+        await S.reset();
+      } catch (e) {
+        return showToast({ msg: `Reset failed (${e.code || e.message})`, kind: 'error' });
+      }
       go(role === 'resident' ? '#/r/home' : '#/p/overview');
     }
   },
@@ -391,4 +708,4 @@ export function notificationsView(aud) {
     }</div>`;
 }
 
-render();
+boot();

@@ -1,0 +1,92 @@
+rules_version = '2';
+
+// SAMAR-AGOS access model
+// - Anyone can create an account (resident).
+// - Staff (provider) access = email listed in config/access.providerEmails.
+//   The first signed-in user may create that document listing only themselves
+//   (project bootstrap); after that only staff can change it.
+// - Residents see only their own reports and notifications addressed to them
+//   or broadcast to residents. Operational records are readable by signed-in
+//   users and writable by staff only.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function accessDoc() {
+      return /databases/$(database)/documents/config/access;
+    }
+    function isProvider() {
+      return signedIn() && exists(accessDoc()) && myEmail() in get(accessDoc()).data.providerEmails;
+    }
+
+    match /config/access {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.providerEmails == [myEmail()];
+      allow update: if isProvider() && request.resource.data.providerEmails.size() > 0;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isProvider());
+      allow create, update: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /reports/{id} {
+      allow read: if isProvider() || (signedIn() && resource.data.reporterUid == request.auth.uid);
+      allow create: if isProvider() || (signedIn() && request.resource.data.reporterUid == request.auth.uid);
+      allow update: if isProvider()
+        || (signedIn() && resource.data.reporterUid == request.auth.uid && request.resource.data.reporterUid == request.auth.uid);
+      allow delete: if isProvider();
+    }
+
+    match /notifications/{id} {
+      allow read: if isProvider()
+        || (signedIn() && (resource.data.uid == request.auth.uid
+            || (resource.data.audience == 'resident' && resource.data.uid == null)));
+      // residents may notify staff or themselves; staff may notify anyone
+      allow create: if isProvider()
+        || (signedIn() && (request.resource.data.audience == 'provider' || request.resource.data.uid == request.auth.uid));
+      allow update: if isProvider() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow delete: if isProvider();
+    }
+
+    // Operational records: visible to signed-in users, managed by staff.
+    match /incidents/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+    match /workOrders/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+    match /advisories/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+    match /altWater/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+    match /emergencyTanks/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+    match /assets/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+    match /system/{id} {
+      allow read: if signedIn();
+      allow write: if isProvider();
+    }
+
+    // Sequential ticket numbers (WR-2026-1042 …). Residents allocate report numbers.
+    match /counters/{id} {
+      allow read: if signedIn();
+      allow write: if signedIn();
+    }
+  }
+}

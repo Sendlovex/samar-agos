@@ -22,6 +22,27 @@ The pipe network in `public/data/network.json` follows real Catbalogan roads fro
 node scripts/build-network.mjs public/data/network.json
 ```
 
+## Backend: Firebase (Authentication + Cloud Firestore)
+
+SAMAR-AGOS uses Firebase project **`samar-agos-ic9sb`**. The web config is in `public/js/firebase-config.js`. It identifies the project but isn't secret; access is enforced by the security rules.
+
+- **Accounts:** email and password (Firebase Authentication). Residents create their own account and choose their barangay, which sets their service zone.
+- **Staff (provider) access:** an email allowlist stored in `config/access`. The first account to sign in can claim staff administrator during profile setup. After that, staff add colleagues under **Sidebar → Staff access**.
+- **Shared data in Firestore:** `reports`, `incidents`, `workOrders`, `advisories`, `notifications`, `altWater`, `emergencyTanks`, `assets`, `system/control` (scenario state), `system/public` (zone report counts for residents), `counters/ids` (ticket numbers) and `users/{uid}` (profiles).
+- **Security rules** (`firestore.rules`):
+  - residents read and update only their own reports and notifications
+  - operational records are readable by signed-in users and writable only by staff
+- **Telemetry** is still simulated on each device, driven by the shared scenario state. It isn't written to Firestore.
+- **Demo data:** the first staff sign-in on an empty database loads the demo dataset. **Demo scenarios → Reset demo data** reseeds it for everyone.
+
+Deploy rule changes after editing `firestore.rules`:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+To run without Firebase (offline local demo with role picker), set `apiKey: ''` in `public/js/firebase-config.js`.
+
 ## Demo walkthrough (core workflow)
 
 1. Sign in as **Water Provider / Operator**. The Overview shows a **WARNING**: Zone B pressure is low and 17 resident reports are waiting for review.

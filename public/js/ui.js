@@ -68,16 +68,21 @@ export const icon = (name, size = 18, cls = '') =>
   `<svg class="ic ${cls}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || P.info}</svg>`;
 
 // ---------------------------------------------------------------- brand
+// "A" mark with water rising inside it. Ids are unique per instance: a gradient defined
+// inside a display:none copy (e.g. the hidden mobile header) would not render elsewhere.
+let logoSeq = 0;
 export function logoMark(size = 36) {
-  return `<svg class="logo-mark" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true">
-    <rect width="40" height="40" rx="9" fill="#0B2545"/>
-    <path d="M20 6.5c-4.6 6-9.2 10.7-9.2 16.2a9.2 9.2 0 0 0 18.4 0c0-5.5-4.6-10.2-9.2-16.2z" fill="none" stroke="#4FC3DC" stroke-width="2.1" stroke-linejoin="round"/>
-    <path d="M14.2 24.2c1.9-1.5 3.9-1.5 5.8 0s3.9 1.5 5.8 0" fill="none" stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round"/>
-    <path d="M15.6 28.3c1.5-1.1 3-1.1 4.4 0s2.9 1.1 4.4 0" fill="none" stroke="#7FB7E6" stroke-width="1.6" stroke-linecap="round"/>
-    <circle cx="20" cy="17.2" r="1.7" fill="#FFFFFF"/>
-    <circle cx="15.8" cy="19.6" r="1.1" fill="#7FB7E6"/>
-    <circle cx="24.2" cy="19.6" r="1.1" fill="#7FB7E6"/>
-    <path d="M15.8 19.6 20 17.2l4.2 2.4" fill="none" stroke="#7FB7E6" stroke-width="0.9"/>
+  const id = `lm${++logoSeq}`;
+  return `<svg class="logo-mark" width="${size}" height="${size}" viewBox="150 140 420 420" aria-hidden="true">
+    <defs>
+      <linearGradient id="${id}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6aaeea"/><stop offset="1" stop-color="#1f62c9"/></linearGradient>
+      <clipPath id="${id}c"><path d="M240 556 360 312 480 556z"/></clipPath>
+    </defs>
+    <g clip-path="url(#${id}c)">
+      <path d="M240 446C292 426 338 404 398 410L480 410V570H240z" fill="#c4e2f8"/>
+      <path d="M240 432C296 430 334 468 412 455L480 446V570H240z" fill="url(#${id}g)"/>
+    </g>
+    <path d="M360 152 170 549H252L360 334 466 549H549z" fill="#130a7c" stroke="#130a7c" stroke-width="14" stroke-linejoin="round"/>
   </svg>`;
 }
 export function logo({ size = 34, tagline = true, light = false } = {}) {
@@ -300,6 +305,20 @@ export function showToast({ msg, kind = 'success' }) {
   root.appendChild(el);
   setTimeout(() => el.classList.add('is-out'), 3600);
   setTimeout(() => el.remove(), 4000);
+}
+
+// Run an async action with its button disabled (prevents double submits), surfacing failures.
+export async function busy(el, fn) {
+  if (el?.disabled) return;
+  if (el) (el.disabled = true), el.setAttribute('aria-busy', 'true');
+  try {
+    return await fn();
+  } catch (e) {
+    console.error(e);
+    showToast({ msg: `Could not complete the action: ${e?.code || e?.message || e}`, kind: 'error' });
+  } finally {
+    if (el && el.isConnected) (el.disabled = false), el.removeAttribute('aria-busy');
+  }
 }
 
 // ---------------------------------------------------------------- delegated actions

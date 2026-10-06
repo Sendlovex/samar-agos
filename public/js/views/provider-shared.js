@@ -1,7 +1,7 @@
 // Shared provider components: work-order modal, advisory publishing, map side panels.
 import * as S from '../store.js';
 import { ZONES, zoneById, TEAMS, CRITICAL_FACILITIES, reportTypeLabel, REPORT_TYPES } from '../data.js';
-import { icon, status, src, field, table, openModal, openDrawer, closeOverlay, register, registerInputs, formData, updatedAgo, priorityBadge, sevBadge, SEV } from '../ui.js';
+import { icon, status, src, field, table, openModal, openDrawer, closeOverlay, register, registerInputs, formData, updatedAgo, priorityBadge, sevBadge, SEV, busy } from '../ui.js';
 import { gaugeBar } from '../charts.js';
 import { assetLiveStatus } from '../map.js';
 import { esc, fmt, fmtL, fmtTime, fmtDate, fmtDateTime, relTime, toLocalInput, fromLocalInput } from '../util.js';
@@ -239,19 +239,19 @@ export function openMapPanel(kind, id) {
 register({
   'map-select': (el) => openMapPanel(el.dataset.kind, el.dataset.id),
   'wo-new': (el) => openWorkOrderModal({ assetId: el.dataset.asset, incidentId: el.dataset.inc, priority: el.dataset.pri, description: el.dataset.desc }),
-  'wo-create': (el) => {
+  'wo-create': (el) => busy(el, async () => {
     const f = document.getElementById('wo-form');
     const d = formData(f);
     if (!d.description.trim() || !d.location.trim()) return S.toast('Location and description are required', 'error');
-    const wo = S.createWorkOrder({ incidentId: el.dataset.inc || null, assetId: d.assetId, location: d.location, priority: d.priority, team: d.team, description: d.description, target: fromLocalInput(d.target) || Date.now() + 6 * 3600000 });
+    const wo = await S.createWorkOrder({ incidentId: el.dataset.inc || null, assetId: d.assetId, location: d.location, priority: d.priority, team: d.team, description: d.description, target: fromLocalInput(d.target) || Date.now() + 6 * 3600000 });
     closeOverlay();
     if (!el.dataset.inc) go(`#/p/work-orders/${wo.id}`);
-  },
+  }),
   'adv-new': (el) => openAdvisoryModal({ incidentId: el.dataset.inc }),
-  'adv-publish': () => {
+  'adv-publish': (el) => busy(el, async () => {
     const d = advDraft;
     if (!d.title.trim() || !d.message.trim() || !d.areas.length) return S.toast('Title, message, and at least one affected area are required', 'error');
-    S.publishAdvisory({
+    await S.publishAdvisory({
       incidentId: d.incidentId || null,
       title: d.title.trim(),
       kind: d.serviceStatus === 'QUALITY ADVISORY' ? 'Water Quality' : d.serviceStatus === 'SCHEDULED MAINTENANCE' ? 'Maintenance' : 'Service Disruption',
@@ -265,5 +265,5 @@ register({
       serviceStatus: d.serviceStatus,
     });
     closeOverlay();
-  },
+  }),
 });

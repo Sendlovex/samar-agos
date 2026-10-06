@@ -1,11 +1,11 @@
 // Resident portal views — mobile-first.
 import * as S from '../store.js';
 import { RESIDENT, REPORT_TYPES, REPORT_STEPS, ZONES, zoneById, reportTypeLabel, UTILITY } from '../data.js';
-import { icon, status, src, card, alertBanner, timeline, empty, register, registerInputs, openModal, closeOverlay, field, updatedAgo, SEV, actions } from '../ui.js';
+import { icon, status, src, card, alertBanner, timeline, empty, register, registerInputs, openModal, closeOverlay, field, updatedAgo, SEV, actions, busy } from '../ui.js';
 import { lineChart, barChart, gaugeBar } from '../charts.js';
 import { renderMap, svgPoint } from '../map.js';
 import { esc, fmt, fmtTime, fmtDate, fmtDateShort, fmtDateTime, relTime, toLocalInput, fromLocalInput, readImage, pointInPolygon, parsePoly, hoursLabel } from '../util.js';
-import { notificationsView, go } from '../app.js';
+import { notificationsView, go, canSwitchRole } from '../app.js';
 
 const st = () => S.getState();
 const myZone = () => zoneById(RESIDENT.zone);
@@ -355,10 +355,10 @@ register({
       { footer: `<button class="btn btn--ghost" data-action="ov-close">Edit report</button><button class="btn btn--primary" data-action="rp-submit">${icon('check', 16)} Submit report</button>` }
     );
   },
-  'rp-submit': () => {
+  'rp-submit': (el) => busy(el, async () => {
     const d = draft;
     const z = zoneAt(d.pin);
-    const r = S.submitReport({
+    const r = await S.submitReport({
       type: d.type,
       description: d.description,
       zone: z.id,
@@ -373,7 +373,7 @@ register({
     lastSubmitted = r.id;
     draft = null;
     go('#/r/report');
-  },
+  }),
   'rp-done-track': (el) => ((lastSubmitted = null), go(`#/r/reports/${el.dataset.id}`)),
   'rp-done-home': () => ((lastSubmitted = null), go('#/r/home')),
   'rv-respond': (el) => {
@@ -635,11 +635,13 @@ const profile = {
       <div class="page-h"><div><h1>Profile</h1></div></div>
       <section class="card"><div class="card-b prof">
         <span class="avatar avatar--lg">${RESIDENT.initials}</span>
-        <div><h2>${esc(RESIDENT.name)}</h2><p class="muted">${esc(RESIDENT.address)}</p></div>
+        <div><h2>${esc(RESIDENT.name)}</h2><p class="muted">${esc(RESIDENT.email || RESIDENT.address)}</p></div>
+        ${RESIDENT.email ? `<button class="btn btn--outline btn--sm prof-edit" data-action="profile-edit">${icon('user', 15)} Edit profile</button>` : ''}
       </div></section>
       ${card(
         'Water service account',
-        `<dl class="kv"><div><dt>Account number</dt><dd class="mono">${RESIDENT.account}</dd></div><div><dt>Meter number</dt><dd class="mono">${RESIDENT.meter}</dd></div><div><dt>Service address</dt><dd>${esc(RESIDENT.address)}</dd></div><div><dt>Service zone</dt><dd>${esc(myZone().name)}</dd></div><div><dt>Mobile number</dt><dd>${RESIDENT.phone}</dd></div><div><dt>Water provider</dt><dd>Maqueda Bay Water Service (fictional)</dd></div></dl>`
+        `<dl class="kv"><div><dt>Account number</dt><dd class="mono">${RESIDENT.account}</dd></div><div><dt>Meter number</dt><dd class="mono">${RESIDENT.meter}</dd></div><div><dt>Service address</dt><dd>${esc(RESIDENT.address)}</dd></div><div><dt>Service zone</dt><dd>${esc(myZone().name)}</dd></div><div><dt>Mobile number</dt><dd>${esc(RESIDENT.phone)}</dd></div><div><dt>Water provider</dt><dd>Maqueda Bay Water Service (fictional)</dd></div></dl>
+        ${RESIDENT.email ? '<p class="fine">Account and meter numbers are placeholders in this prototype.</p>' : ''}`
       )}
       ${card(
         'Notification preferences',
@@ -654,7 +656,7 @@ const profile = {
           .join('')}</div>
         ${field('Preferred language', '<select id="pf-lang"><option>English</option><option>Waray-Waray</option><option>Filipino</option></select>', { id: 'pf-lang' })}`
       )}
-      <div class="form-a"><button class="btn btn--outline" data-action="switch-role">${icon('activity', 16)} Switch to provider view (demo)</button><button class="btn btn--ghost" data-action="logout">${icon('logout', 16)} Sign out</button></div>
+      <div class="form-a">${canSwitchRole() ? `<button class="btn btn--outline" data-action="switch-role">${icon('activity', 16)} Switch to provider view</button>` : ''}<button class="btn btn--ghost" data-action="logout">${icon('logout', 16)} Sign out</button></div>
     </div>`;
   },
 };
