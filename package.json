@@ -1,0 +1,9 @@
+{
+  "name": "samar-agos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SAMAR-AGOS — Smart Water Monitoring and Response (hackathon prototype, simulated data)",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
